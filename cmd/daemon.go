@@ -69,8 +69,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	saasURL := resolveSaaSURL()
 	gatewayURL := resolveGatewayURL()
 
-	// Need at least one mode of operation
-	if token == "" {
+	// Need at least one mode of operation: root token OR multi-upstream config
+	if token == "" && resolveUpstreams() == "" {
 		return cmd.Help()
 	}
 
