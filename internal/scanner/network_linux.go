@@ -9,15 +9,27 @@ import (
 )
 
 func collectNetworkInfo(ctx context.Context, runner CommandRunner, info *NetworkInfo) error {
-	// Try ip -j first (JSON output from iproute2)
-	if out, err := runner.Run(ctx, "ip -j addr show 2>/dev/null"); err == nil {
-		var ipAddrs []parser.IPAddrJSON
-		if jsonErr := json.Unmarshal(out, &ipAddrs); jsonErr == nil {
-			info.Interfaces = convertParserInterfaces(parser.ParseIPAddrJSON(ipAddrs))
+	// Prefer host sysfs when running in a container with /host/sys mounted.
+	// This gives us the host's real interfaces (for topology inference) instead
+	// of the pod's network namespace which only shows eth0.
+	if sysfsPath := hostSysfsRoot(); sysfsPath != "" {
+		if hostIfaces := collectHostInterfaces(sysfsPath); len(hostIfaces) > 0 {
+			info.Interfaces = hostIfaces
 		}
 	}
 
-	// Fallback to text parsing if JSON didn't work
+	// Fall back to ip commands (works on bare metal or when sysfs not mounted)
+	if len(info.Interfaces) == 0 {
+		// Try ip -j first (JSON output from iproute2)
+		if out, err := runner.Run(ctx, "ip -j addr show 2>/dev/null"); err == nil {
+			var ipAddrs []parser.IPAddrJSON
+			if jsonErr := json.Unmarshal(out, &ipAddrs); jsonErr == nil {
+				info.Interfaces = convertParserInterfaces(parser.ParseIPAddrJSON(ipAddrs))
+			}
+		}
+	}
+
+	// Fallback to text parsing if neither sysfs nor JSON worked
 	if len(info.Interfaces) == 0 {
 		if out, err := runner.Run(ctx, "ip addr show 2>/dev/null"); err == nil {
 			info.Interfaces = convertParserInterfaces(parser.ParseIPAddr(string(out)))
