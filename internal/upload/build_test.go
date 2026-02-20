@@ -62,9 +62,9 @@ func TestBuildRequestHostMapping(t *testing.T) {
 		t.Errorf("expected 3 interfaces, got %d", len(req.Host.Network.Interfaces))
 	}
 
-	// Check hostname
-	if req.Host.Network.Hostname != "test-host.local" {
-		t.Errorf("hostname = %q, want test-host.local", req.Host.Network.Hostname)
+	// Check hostname — uses hostInfo.Name (OverrideHostName-patched), not netInfo.Hostname
+	if req.Host.Network.Hostname != "test-host" {
+		t.Errorf("hostname = %q, want test-host", req.Host.Network.Hostname)
 	}
 
 	// Check meta

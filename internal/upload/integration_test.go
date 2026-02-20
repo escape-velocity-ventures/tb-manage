@@ -184,8 +184,8 @@ func TestFullScanToEdgeIngestContract(t *testing.T) {
 		if !ok {
 			t.Fatal("host.network is not an object")
 		}
-		if network["hostname"] != "plato.local" {
-			t.Errorf("host.network.hostname = %v", network["hostname"])
+		if network["hostname"] != "plato" {
+			t.Errorf("host.network.hostname = %v, want plato", network["hostname"])
 		}
 
 		ifaces, ok := network["interfaces"].([]interface{})

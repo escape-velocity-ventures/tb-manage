@@ -38,7 +38,6 @@ func BuildRequest(result *scanner.Result) *EdgeIngestRequest {
 			if result.Network != nil {
 				var netInfo scanner.NetworkInfo
 				if err := json.Unmarshal(result.Network, &netInfo); err == nil {
-					host.Network.Hostname = netInfo.Hostname
 					for _, iface := range netInfo.Interfaces {
 						host.Network.Interfaces = append(host.Network.Interfaces, HostInterface{
 							Name: iface.Name,
