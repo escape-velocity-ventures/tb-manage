@@ -449,7 +449,7 @@ func TestScanResultJSONRoundTrip(t *testing.T) {
 
 // TestUploadClientRetryConfig verifies client configuration.
 func TestUploadClientRetryConfig(t *testing.T) {
-	c := NewClient("https://example.com", "test-token")
+	c := NewClient("https://example.com", "test-token", "test-anon-key")
 	if c.maxRetries != 3 {
 		t.Errorf("maxRetries = %d, want 3", c.maxRetries)
 	}

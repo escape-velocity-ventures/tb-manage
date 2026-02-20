@@ -16,15 +16,17 @@ import (
 type Client struct {
 	baseURL    string
 	token      string
+	anonKey    string
 	httpClient *http.Client
 	maxRetries int
 }
 
 // NewClient creates a new upload client.
-func NewClient(baseURL, token string) *Client {
+func NewClient(baseURL, token, anonKey string) *Client {
 	return &Client{
 		baseURL: baseURL,
 		token:   token,
+		anonKey: anonKey,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -60,6 +62,10 @@ func (c *Client) Upload(ctx context.Context, req *EdgeIngestRequest) (*EdgeInges
 			return nil, fmt.Errorf("create request: %w", err)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
+		if c.anonKey != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+c.anonKey)
+			httpReq.Header.Set("apikey", c.anonKey)
+		}
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {

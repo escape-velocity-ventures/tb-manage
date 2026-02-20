@@ -16,6 +16,7 @@ type ScanLoopConfig struct {
 	Interval  time.Duration
 	UploadURL string // Supabase base URL for edge-ingest
 	Token     string // agent_token
+	AnonKey   string // Supabase anon key
 	Version   string // binary version
 }
 
@@ -34,7 +35,7 @@ func NewScanLoop(cfg ScanLoopConfig, logger *slog.Logger) *ScanLoop {
 	}
 
 	if cfg.UploadURL != "" && cfg.Token != "" {
-		sl.client = upload.NewClient(cfg.UploadURL, cfg.Token)
+		sl.client = upload.NewClient(cfg.UploadURL, cfg.Token, cfg.AnonKey)
 	}
 
 	return sl

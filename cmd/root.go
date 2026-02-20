@@ -11,6 +11,7 @@ var (
 	// Flags
 	flagToken    string
 	flagURL      string
+	flagAnonKey  string
 	flagConfig   string
 	flagLogLevel string
 )
@@ -27,6 +28,7 @@ infrastructure to TinkerBelle SaaS and can serve as a terminal session agent.`,
 func init() {
 	rootCmd.PersistentFlags().StringVar(&flagToken, "token", "", "Agent authentication token (env: TB_TOKEN)")
 	rootCmd.PersistentFlags().StringVar(&flagURL, "url", "", "TinkerBelle SaaS URL (env: TB_URL)")
+	rootCmd.PersistentFlags().StringVar(&flagAnonKey, "anon-key", "", "Supabase anon key for API auth (env: TB_ANON_KEY)")
 	rootCmd.PersistentFlags().StringVar(&flagConfig, "config", "", "Config file path (default: /etc/tb-discover/config.yaml)")
 	rootCmd.PersistentFlags().StringVar(&flagLogLevel, "log-level", "info", "Log level: debug, info, warn, error")
 }
@@ -54,6 +56,14 @@ func resolveURL() string {
 		return flagURL
 	}
 	return os.Getenv("TB_URL")
+}
+
+// resolveAnonKey returns the anon key from flag or environment.
+func resolveAnonKey() string {
+	if flagAnonKey != "" {
+		return flagAnonKey
+	}
+	return os.Getenv("TB_ANON_KEY")
 }
 
 // lookupEnv wraps os.LookupEnv.

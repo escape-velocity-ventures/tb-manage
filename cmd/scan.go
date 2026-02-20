@@ -197,13 +197,14 @@ func runSSHScan(ctx context.Context, scanners []scanner.Scanner, profile scanner
 func uploadResult(ctx context.Context, result *scanner.Result) error {
 	token := resolveToken()
 	url := resolveURL()
+	anonKey := resolveAnonKey()
 	if token == "" || url == "" {
 		return fmt.Errorf("--token/TB_TOKEN and --url/TB_URL required for upload")
 	}
 
 	req := upload.BuildRequest(result)
 	req.AgentToken = token
-	client := upload.NewClient(url, token)
+	client := upload.NewClient(url, token, anonKey)
 	resp, err := client.Upload(ctx, req)
 	if err != nil {
 		return fmt.Errorf("upload failed: %w", err)
