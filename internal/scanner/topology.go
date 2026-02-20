@@ -39,3 +39,24 @@ func ApplyTopology(result *Result) {
 
 	result.Meta.InferredRole = string(role)
 }
+
+// OverrideHostName replaces the host name in the scan result.
+// In Kubernetes, the HostScanner's `hostname` command returns the pod name,
+// not the node name. This function patches it with the real node name.
+func OverrideHostName(result *Result, name string) {
+	if result.Host == nil {
+		return
+	}
+
+	var hostInfo HostInfo
+	if err := json.Unmarshal(result.Host, &hostInfo); err != nil {
+		return
+	}
+
+	hostInfo.Name = name
+
+	if updated, err := json.Marshal(hostInfo); err == nil {
+		result.Host = updated
+		result.Phases["host"] = updated
+	}
+}

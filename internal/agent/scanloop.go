@@ -179,6 +179,10 @@ func (sl *ScanLoop) runScan(ctx context.Context) {
 	result.Meta.Profile = sl.cfg.Profile
 	result.Meta.SourceHost = hostname
 
+	// Override host name — HostScanner runs `hostname` inside the pod which
+	// returns the pod name (e.g., tb-discover-xxxx), not the real node name.
+	scanner.OverrideHostName(result, hostname)
+
 	sl.log.Info("scan complete",
 		"duration_ms", result.Meta.DurationMS,
 		"phases", result.Meta.Phases,

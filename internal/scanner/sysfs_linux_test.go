@@ -6,25 +6,31 @@ import (
 	"testing"
 )
 
-func TestCollectHostInterfaces(t *testing.T) {
-	// Create a fake sysfs tree
+func TestCollectHostInterfacesFromProcNetDev(t *testing.T) {
+	// Create a fake /proc/1/net/dev file
 	root := t.TempDir()
-	netDir := filepath.Join(root, "sys", "class", "net")
+	devPath := filepath.Join(root, "proc", "1", "net")
+	if err := os.MkdirAll(devPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
-	// eth0 — physical NIC
-	mkSysfsIface(t, netDir, "eth0", "aa:bb:cc:dd:ee:01", "1500", "up")
-	// cali12345 — CNI interface
-	mkSysfsIface(t, netDir, "cali12345abc", "ee:ee:ee:ee:ee:ee", "1450", "up")
-	// flannel.1 — CNI overlay
-	mkSysfsIface(t, netDir, "flannel.1", "fe:12:34:56:78:90", "1450", "up")
-	// lo — loopback
-	mkSysfsIface(t, netDir, "lo", "00:00:00:00:00:00", "65536", "unknown")
+	// Real /proc/net/dev content from worker1
+	content := `Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+  cni0: 783649833831 194887922    0    0    0     0          0         0 505776602885 276040021    0    0    0     0       0          0
+  eth0: 452698464934 709126800 146203 1687775    0     0          0    103949 983787744722 955845802    0    0    0     0       0          0
+flannel.1: 202264510440 140570370    0    0    0     0          0         0 715068220544 102315614    0    0    0    28       0          0
+    lo: 232655232168 408740959    0    0    0     0          0         0 232655232168 408740959    0    0    0     0       0          0
+veth75825756: 72475154  298752    0    0    0     0          0         0 41952077  400385    0    0    0     0       0          0
+`
+	if err := os.WriteFile(filepath.Join(devPath, "dev"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-	sysfsPath := filepath.Join(root, "sys", "class", "net")
-	ifaces := collectHostInterfaces(sysfsPath)
+	ifaces := collectHostInterfaces(filepath.Join(devPath, "dev"))
 
-	if len(ifaces) != 4 {
-		t.Fatalf("expected 4 interfaces, got %d", len(ifaces))
+	if len(ifaces) != 5 {
+		t.Fatalf("expected 5 interfaces, got %d: %+v", len(ifaces), ifaces)
 	}
 
 	// Build lookup
@@ -33,27 +39,11 @@ func TestCollectHostInterfaces(t *testing.T) {
 		byName[iface.Name] = iface
 	}
 
-	// Check eth0
-	if eth0, ok := byName["eth0"]; !ok {
-		t.Error("missing eth0")
-	} else {
-		if eth0.MAC != "aa:bb:cc:dd:ee:01" {
-			t.Errorf("eth0 MAC = %q, want %q", eth0.MAC, "aa:bb:cc:dd:ee:01")
+	// Check expected interfaces
+	for _, expected := range []string{"cni0", "eth0", "flannel.1", "lo", "veth75825756"} {
+		if _, ok := byName[expected]; !ok {
+			t.Errorf("missing interface %q", expected)
 		}
-		if eth0.MTU != 1500 {
-			t.Errorf("eth0 MTU = %d, want 1500", eth0.MTU)
-		}
-		if eth0.State != "up" {
-			t.Errorf("eth0 state = %q, want up", eth0.State)
-		}
-	}
-
-	// Check CNI interface present
-	if _, ok := byName["cali12345abc"]; !ok {
-		t.Error("missing cali12345abc")
-	}
-	if _, ok := byName["flannel.1"]; !ok {
-		t.Error("missing flannel.1")
 	}
 }
 
@@ -64,34 +54,16 @@ func TestCollectHostInterfacesNonexistentPath(t *testing.T) {
 	}
 }
 
-func TestHostSysfsRoot(t *testing.T) {
+func TestHostProcNetDev(t *testing.T) {
 	// No HOST_ROOT set
 	t.Setenv("HOST_ROOT", "")
-	if got := hostSysfsRoot(); got != "" {
+	if got := hostProcNetDev(); got != "" {
 		t.Errorf("expected empty, got %q", got)
 	}
 
 	// HOST_ROOT set
 	t.Setenv("HOST_ROOT", "/host")
-	if got := hostSysfsRoot(); got != "/host/sys/class/net" {
-		t.Errorf("expected /host/sys/class/net, got %q", got)
-	}
-}
-
-func mkSysfsIface(t *testing.T, netDir, name, mac, mtu, state string) {
-	t.Helper()
-	dir := filepath.Join(netDir, name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeSysfsFile(t, dir, "address", mac)
-	writeSysfsFile(t, dir, "mtu", mtu)
-	writeSysfsFile(t, dir, "operstate", state)
-}
-
-func writeSysfsFile(t *testing.T, dir, name, content string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content+"\n"), 0o644); err != nil {
-		t.Fatal(err)
+	if got := hostProcNetDev(); got != "/host/proc/1/net/dev" {
+		t.Errorf("expected /host/proc/1/net/dev, got %q", got)
 	}
 }

@@ -9,11 +9,11 @@ import (
 )
 
 func collectNetworkInfo(ctx context.Context, runner CommandRunner, info *NetworkInfo) error {
-	// Prefer host sysfs when running in a container with /host/sys mounted.
-	// This gives us the host's real interfaces (for topology inference) instead
-	// of the pod's network namespace which only shows eth0.
-	if sysfsPath := hostSysfsRoot(); sysfsPath != "" {
-		if hostIfaces := collectHostInterfaces(sysfsPath); len(hostIfaces) > 0 {
+	// Prefer host's /proc/1/net/dev when running in a container with hostPID.
+	// PID 1 is the host's init, so /proc/1/net/dev shows the host's real
+	// interfaces. sysfs (/sys/class/net/) does NOT work — it's namespace-filtered.
+	if procPath := hostProcNetDev(); procPath != "" {
+		if hostIfaces := collectHostInterfaces(procPath); len(hostIfaces) > 0 {
 			info.Interfaces = hostIfaces
 		}
 	}
