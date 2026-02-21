@@ -278,6 +278,62 @@ func (a *Agent) handleMessage(raw []byte) error {
 	}
 }
 
+// buildShellCommand builds the shell command to execute based on the target.
+// Returns the command args and an error code if the target is invalid.
+func (a *Agent) buildShellCommand(target *protocol.TerminalTarget) ([]string, string, error) {
+	if target == nil {
+		return a.shellCommand, "", nil
+	}
+
+	shell := target.Shell
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+
+	switch target.Type {
+	case "host":
+		// Use agent's configured shell or the target's shell override
+		if target.Shell != "" {
+			return []string{target.Shell}, "", nil
+		}
+		return a.shellCommand, "", nil
+
+	case "lima":
+		if target.Name == "" {
+			return nil, "TARGET_NOT_FOUND", fmt.Errorf("lima target requires a VM name")
+		}
+		cmd := []string{"limactl", "shell", target.Name}
+		if target.Shell != "" {
+			cmd = append(cmd, target.Shell)
+		}
+		return cmd, "", nil
+
+	case "docker":
+		if target.Container == "" {
+			return nil, "TARGET_NOT_FOUND", fmt.Errorf("docker target requires a container name")
+		}
+		runtime := target.Runtime
+		if runtime == "" {
+			runtime = "docker"
+		}
+		return []string{runtime, "exec", "-it", target.Container, shell}, "", nil
+
+	case "k8s-pod":
+		if target.Pod == "" || target.Namespace == "" {
+			return nil, "TARGET_NOT_FOUND", fmt.Errorf("k8s-pod target requires pod and namespace")
+		}
+		cmd := []string{"kubectl", "exec", "-it", target.Pod, "-n", target.Namespace}
+		if target.Container != "" {
+			cmd = append(cmd, "-c", target.Container)
+		}
+		cmd = append(cmd, "--", shell)
+		return cmd, "", nil
+
+	default:
+		return nil, "UNSUPPORTED_TARGET", fmt.Errorf("unsupported target type: %s", target.Type)
+	}
+}
+
 func (a *Agent) handleSessionOpen(msg protocol.SessionOpenMessage) error {
 	// Permission check
 	if !a.permissions["terminal"] {
@@ -285,6 +341,7 @@ func (a *Agent) handleSessionOpen(msg protocol.SessionOpenMessage) error {
 			Type:      protocol.TypeSessionError,
 			SessionID: msg.SessionID,
 			Error:     "terminal permission not granted",
+			Code:      "PERMISSION_DENIED",
 		})
 		return fmt.Errorf("terminal permission not granted")
 	}
@@ -306,11 +363,28 @@ func (a *Agent) handleSessionOpen(msg protocol.SessionOpenMessage) error {
 		return fmt.Errorf("max sessions reached (%d)", a.maxSessions)
 	}
 
+	// Build command based on target type
+	shellCmd, errCode, err := a.buildShellCommand(msg.Target)
+	if err != nil {
+		a.sendMessage(protocol.SessionErrorMessage{
+			Type:      protocol.TypeSessionError,
+			SessionID: msg.SessionID,
+			Error:     err.Error(),
+			Code:      errCode,
+		})
+		return err
+	}
+
+	targetDesc := "host"
+	if msg.Target != nil {
+		targetDesc = msg.Target.Type
+	}
+
 	session, err := terminal.NewPTYSession(
 		msg.SessionID,
 		msg.Cols,
 		msg.Rows,
-		a.shellCommand,
+		shellCmd,
 		func(sessionID, data string) {
 			a.sendMessage(protocol.PTYOutputMessage{
 				Type:      protocol.TypePTYOutput,
@@ -331,12 +405,13 @@ func (a *Agent) handleSessionOpen(msg protocol.SessionOpenMessage) error {
 			Type:      protocol.TypeSessionError,
 			SessionID: msg.SessionID,
 			Error:     fmt.Sprintf("failed to create session: %v", err),
+			Code:      "INTERNAL_ERROR",
 		})
 		return err
 	}
 
 	a.sessions[msg.SessionID] = session
-	a.log.Info("session opened", "session_id", msg.SessionID)
+	a.log.Info("session opened", "session_id", msg.SessionID, "target", targetDesc)
 
 	// Watch for session exit
 	go func() {
