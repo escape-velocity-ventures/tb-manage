@@ -36,7 +36,15 @@ func NewPTYSession(id string, cols, rows int, onOutput func(string, string), onE
 
 	shell := os.Getenv("SHELL")
 	if shell == "" {
-		shell = "/bin/bash"
+		for _, candidate := range []string{"/bin/bash", "/bin/sh"} {
+			if _, err := os.Stat(candidate); err == nil {
+				shell = candidate
+				break
+			}
+		}
+		if shell == "" {
+			shell = "/bin/sh"
+		}
 	}
 
 	cmd := exec.Command(shell)
