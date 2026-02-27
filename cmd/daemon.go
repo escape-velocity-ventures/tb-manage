@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -155,7 +156,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		ScanConfig:   scanCfg,
 		Permissions:  permissions,
 		MaxSessions:  flagMaxSessions,
-		ShellCommand: shellCmd,
+		ShellCommand:       shellCmd,
+		TokenInURLFallback: cfg.TokenInURLFallback,
 	})
 
 	return a.Run(context.Background())
@@ -183,4 +185,23 @@ func resolveEnv(key string) string {
 		return v
 	}
 	return ""
+}
+
+// validateGatewayURL checks the gateway URL scheme.
+// Returns an error if the URL is insecure and --allow-insecure is not set.
+func validateGatewayURL(gatewayURL string, allowInsecure bool) error {
+	if gatewayURL == "" {
+		return nil
+	}
+	if strings.HasPrefix(gatewayURL, "ws://") {
+		if !allowInsecure {
+			return fmt.Errorf("insecure ws:// gateway URL rejected; use wss:// or pass --allow-insecure for local development")
+		}
+		slog.Warn("SECURITY: ws:// is insecure. Use wss:// for production.", "url", gatewayURL)
+		return nil
+	}
+	if !strings.HasPrefix(gatewayURL, "wss://") {
+		return fmt.Errorf("gateway URL must use wss:// (or ws:// with --allow-insecure); got: %s", gatewayURL)
+	}
+	return nil
 }

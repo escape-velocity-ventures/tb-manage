@@ -17,6 +17,7 @@ type Config struct {
 	LogLevel          string        `yaml:"log_level"`
 	Permissions       []string      `yaml:"permissions"`        // e.g., ["terminal", "scan"]
 	ExcludeNamespaces []string      `yaml:"exclude_namespaces"` // namespaces to skip during k8s scan
+	TokenInURLFallback bool          `yaml:"token_in_url_fallback"` // DEPRECATED: also send token as query param (default true for migration)
 }
 
 // DefaultConfig returns sensible defaults.
@@ -24,6 +25,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		Profile:      "standard",
 		ScanInterval: 5 * time.Minute,
+		TokenInURLFallback: true,
 		LogLevel:     "info",
 		Permissions:  []string{"scan"},
 	}

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,7 +54,7 @@ func NewPTYSession(id string, cols, rows int, shellCmd []string, onOutput func(s
 		}
 		cmd = exec.Command(shell)
 	}
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = append(filteredEnv(), "TERM=xterm-256color")
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Cols: uint16(cols),
@@ -133,4 +134,35 @@ func (s *PTYSession) readLoop() {
 			return
 		}
 	}
+}
+
+// filteredEnv returns os.Environ() with sensitive variables removed.
+func filteredEnv() []string {
+	sensitiveKeys := []string{"TB_TOKEN", "TB_SECRET"}
+	sensitiveSuffixes := []string{"_KEY", "_SECRET", "_PASSWORD", "_TOKEN"}
+
+	var filtered []string
+	for _, env := range os.Environ() {
+		key, _, _ := strings.Cut(env, "=")
+		skip := false
+		for _, k := range sensitiveKeys {
+			if key == k {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			upper := strings.ToUpper(key)
+			for _, suffix := range sensitiveSuffixes {
+				if strings.HasSuffix(upper, suffix) {
+					skip = true
+					break
+				}
+			}
+		}
+		if !skip {
+			filtered = append(filtered, env)
+		}
+	}
+	return filtered
 }
