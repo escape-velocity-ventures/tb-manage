@@ -1,8 +1,15 @@
 tb-manage
+tb-manage-*
 *.exe
 *.test
 *.out
 .DS_Store
+
+# Build artifacts
+dist/tb-manage-*
+
+# Wrangler local state
+.wrangler/
 
 # Auto-added by Secret Guardian
 **/keys/*_key
