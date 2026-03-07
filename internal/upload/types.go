@@ -35,6 +35,7 @@ type HostScanResult struct {
 	Storage    json.RawMessage   `json:"storage,omitempty"`
 	Containers json.RawMessage   `json:"containers,omitempty"`
 	GPU        json.RawMessage   `json:"gpu,omitempty"`
+	Services   json.RawMessage   `json:"services,omitempty"`
 }
 
 // HostSystem matches the system field in HostScanResult.
