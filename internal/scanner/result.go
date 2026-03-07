@@ -12,6 +12,7 @@ type Result struct {
 	Power      json.RawMessage            `json:"power,omitempty"`
 	IoT        json.RawMessage            `json:"iot,omitempty"`
 	GPU        json.RawMessage            `json:"gpu,omitempty"`
+	Services   json.RawMessage            `json:"services,omitempty"`
 	Phases     map[string]json.RawMessage `json:"-"`
 	Meta       ResultMeta                 `json:"meta"`
 }
@@ -55,5 +56,7 @@ func (r *Result) Set(name string, data json.RawMessage) {
 		r.IoT = data
 	case "gpu":
 		r.GPU = data
+	case "services":
+		r.Services = data
 	}
 }
