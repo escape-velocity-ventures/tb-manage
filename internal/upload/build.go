@@ -2,6 +2,7 @@ package upload
 
 import (
 	"encoding/json"
+	"math"
 
 	"github.com/tinkerbelle-io/tb-manage/internal/scanner"
 )
@@ -72,4 +73,63 @@ func BuildRequest(result *scanner.Result) *EdgeIngestRequest {
 	}
 
 	return req
+}
+
+// BuildNodeHostRequests converts cluster node scan results into individual
+// EdgeIngestRequests for host discovery. Each node becomes a minimal host
+// entry with discovery_method="k8s_api".
+func BuildNodeHostRequests(clusterData json.RawMessage, clusterName, version string) []*EdgeIngestRequest {
+	var cluster scanner.ClusterScanResult
+	if err := json.Unmarshal(clusterData, &cluster); err != nil {
+		return nil
+	}
+
+	var requests []*EdgeIngestRequest
+	for _, node := range cluster.Nodes {
+		// Convert memory from bytes to GB (rounded to 1 decimal)
+		memoryGB := math.Round(float64(node.MemoryBytes)/1073741824.0*10) / 10
+
+		// Build primary IP from node addresses
+		primaryIP := node.InternalIP
+		if primaryIP == "" {
+			primaryIP = node.ExternalIP
+		}
+
+		// Build interfaces from known IPs
+		var interfaces []HostInterface
+		if node.InternalIP != "" {
+			interfaces = append(interfaces, HostInterface{Name: "internal", IP: node.InternalIP})
+		}
+		if node.ExternalIP != "" {
+			interfaces = append(interfaces, HostInterface{Name: "external", IP: node.ExternalIP})
+		}
+
+		req := &EdgeIngestRequest{
+			Host: &HostScanResult{
+				Name:            node.Name,
+				Type:            "baremetal",
+				DiscoveryMethod: "k8s_api",
+				System: HostSystem{
+					OS:       node.OS,
+					Arch:     node.Arch,
+					CPUCores: node.CPUCores,
+					MemoryGB: memoryGB,
+				},
+				Network: HostNetwork{
+					Hostname:   node.Name,
+					Interfaces: interfaces,
+				},
+				Kubernetes: &HostKubernetes{
+					ClusterName: clusterName,
+				},
+			},
+			Meta: EdgeIngestMeta{
+				Version:    version,
+				Phases:     []string{"k8s_node_discovery"},
+				SourceHost: "controller",
+			},
+		}
+		requests = append(requests, req)
+	}
+	return requests
 }

@@ -25,11 +25,12 @@ type EdgeIngestMeta struct {
 
 // HostScanResult matches the edge-ingest HostScanResult interface.
 type HostScanResult struct {
-	Name       string            `json:"name"`
-	Type       string            `json:"type"` // baremetal, vm, cloud
-	System     HostSystem        `json:"system"`
-	Network    HostNetwork       `json:"network"`
-	Kubernetes *HostKubernetes   `json:"kubernetes,omitempty"`
+	Name            string            `json:"name"`
+	Type            string            `json:"type"` // baremetal, vm, cloud
+	DiscoveryMethod string            `json:"discovery_method,omitempty"`
+	System          HostSystem        `json:"system"`
+	Network         HostNetwork       `json:"network"`
+	Kubernetes      *HostKubernetes   `json:"kubernetes,omitempty"`
 
 	// Extra fields go into scan_data via [key: string]: unknown
 	Storage    json.RawMessage   `json:"storage,omitempty"`

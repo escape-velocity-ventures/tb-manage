@@ -40,7 +40,12 @@ func (s *ServicesScanner) Scan(ctx context.Context, runner CommandRunner) (json.
 	info.DevTools = detectDevTools(ctx, runner)
 
 	// Kubelet running check (cross-platform)
+	// k3s embeds kubelet in a single binary — no separate "kubelet" process
 	if _, err := runner.Run(ctx, "pgrep kubelet"); err == nil {
+		info.KubeletRunning = true
+	} else if _, err := runner.Run(ctx, "pgrep k3s"); err == nil {
+		info.KubeletRunning = true
+	} else if _, err := runner.Run(ctx, "pgrep k0s"); err == nil {
 		info.KubeletRunning = true
 	}
 
@@ -48,19 +53,23 @@ func (s *ServicesScanner) Scan(ctx context.Context, runner CommandRunner) (json.
 }
 
 // loadKubeContexts reads kubeconfig and returns all contexts.
+// Checks KUBECONFIG, ~/.kube/config, and /etc/rancher/k3s/k3s.yaml (k3s default).
 func loadKubeContexts() []KubeContext {
 	kubeconfig := os.Getenv("KUBECONFIG")
 	if kubeconfig == "" {
 		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil
+		if err == nil {
+			kubeconfig = filepath.Join(home, ".kube", "config")
 		}
-		kubeconfig = filepath.Join(home, ".kube", "config")
 	}
 
 	config, err := clientcmd.LoadFromFile(kubeconfig)
 	if err != nil {
-		return nil
+		// Try k3s default location
+		config, err = clientcmd.LoadFromFile("/etc/rancher/k3s/k3s.yaml")
+		if err != nil {
+			return nil
+		}
 	}
 
 	var contexts []KubeContext

@@ -181,16 +181,46 @@ func scanNodes(ctx context.Context, clientset kubernetes.Interface) ([]NodeScanR
 
 		roles := extractRoles(node.Labels)
 
+		var internalIP, externalIP string
+		for _, addr := range node.Status.Addresses {
+			switch addr.Type {
+			case corev1.NodeInternalIP:
+				internalIP = addr.Address
+			case corev1.NodeExternalIP:
+				externalIP = addr.Address
+			}
+		}
+
 		nodes = append(nodes, NodeScanResult{
-			Name:    node.Name,
-			Status:  status,
-			Roles:   roles,
-			Version: node.Status.NodeInfo.KubeletVersion,
-			OS:      node.Status.NodeInfo.OperatingSystem,
-			OSImage: node.Status.NodeInfo.OSImage,
+			Name:             node.Name,
+			Status:           status,
+			Roles:            roles,
+			Version:          node.Status.NodeInfo.KubeletVersion,
+			OS:               node.Status.NodeInfo.OperatingSystem,
+			OSImage:          node.Status.NodeInfo.OSImage,
+			Arch:             node.Status.NodeInfo.Architecture,
+			CPUCores:         cpuCores(node.Status.Capacity),
+			MemoryBytes:      memoryBytes(node.Status.Capacity),
+			ContainerRuntime: node.Status.NodeInfo.ContainerRuntimeVersion,
+			InternalIP:       internalIP,
+			ExternalIP:       externalIP,
 		})
 	}
 	return nodes, nil
+}
+
+func cpuCores(capacity corev1.ResourceList) int {
+	if q, ok := capacity[corev1.ResourceCPU]; ok {
+		return int(q.Value())
+	}
+	return 0
+}
+
+func memoryBytes(capacity corev1.ResourceList) int64 {
+	if q, ok := capacity[corev1.ResourceMemory]; ok {
+		return q.Value()
+	}
+	return 0
 }
 
 func extractRoles(labels map[string]string) []string {
