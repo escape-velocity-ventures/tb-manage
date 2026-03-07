@@ -76,8 +76,9 @@ type PTYResizeMessage struct {
 }
 
 type HeartbeatMessage struct {
-	Type      string `json:"type"`
-	AgentID   string `json:"agentId"`
-	ClusterID string `json:"clusterId"`
-	Timestamp int64  `json:"timestamp"`
+	Type      string   `json:"type"`
+	AgentID   string   `json:"agentId"`
+	ClusterID string   `json:"clusterId"`
+	Timestamp int64    `json:"timestamp"`
+	Sessions  []string `json:"sessions,omitempty"` // Active persistent (tmux) session IDs
 }

@@ -34,10 +34,11 @@ func NewRegistryWithOptions(opts RegistryOptions) *Registry {
 		NewHostScanner(),
 	}
 
-	// Standard: host + network + storage + topology
+	// Standard: host + network + storage + gpu + topology
 	standard := append(minimal,
 		NewNetworkScanner(),
 		NewStorageScanner(),
+		NewGPUScanner(),
 	)
 
 	// Full: standard + containers + k8s + power + iot

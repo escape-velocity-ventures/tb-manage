@@ -56,6 +56,7 @@ func BuildRequest(result *scanner.Result) *EdgeIngestRequest {
 
 			host.Storage = result.Storage
 			host.Containers = result.Containers
+			host.GPU = result.GPU
 
 			req.Host = host
 		}

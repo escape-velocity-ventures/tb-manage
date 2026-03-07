@@ -32,6 +32,7 @@ var (
 	flagShellCommand        string
 	flagAuditLog            string
 	flagPublicKey           string
+	flagNoTmux              bool
 )
 
 var daemonCmd = &cobra.Command{
@@ -67,6 +68,7 @@ func init() {
 	daemonCmd.Flags().StringVar(&flagAuditLog, "audit-log", "", "Custom audit log path (default: ~/.tb-manage/audit.log on macOS, /var/log/tb-manage/audit.log on Linux)")
 	daemonCmd.Flags().StringVar(&flagPublicKey, "public-key", "", "Ed25519 public key for command signature verification (hex or base64, env: TB_PUBLIC_KEY)")
 	daemonCmd.Flags().StringVar(&flagShellCommand, "shell-command", "", "Custom shell command for PTY sessions (e.g., 'nsenter -t 1 -m -u -i -n -- /bin/bash')")
+	daemonCmd.Flags().BoolVar(&flagNoTmux, "no-tmux", false, "Disable persistent terminal sessions (no tmux)")
 	rootCmd.AddCommand(daemonCmd)
 }
 
@@ -199,6 +201,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		PublicKey:          resolvePublicKey(),
 		IdentityMode:       identity,
 		HostIdentity:       hostIdentity,
+		DisableTmux:        flagNoTmux,
 	})
 
 	return a.Run(context.Background())

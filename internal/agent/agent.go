@@ -52,6 +52,9 @@ type Agent struct {
 	maxSessions  int
 	shellCommand []string
 
+	// Persistent sessions (tmux)
+	tmuxEnabled bool
+
 	// Audit
 	auditLog *audit.AuditLogger
 
@@ -83,6 +86,7 @@ type Config struct {
 	PublicKey          string   // Ed25519 public key for command verification (hex or base64)
 	IdentityMode       string            // "token" or "ssh-host-key"
 	HostIdentity       *auth.HostIdentity // SSH host key identity (when IdentityMode == "ssh-host-key")
+	DisableTmux        bool               // Disable persistent terminal sessions (no tmux)
 }
 
 // New creates a new Agent (does not connect yet).
@@ -123,6 +127,16 @@ func New(cfg Config) *Agent {
 		logger.Warn("no public key configured — commands will NOT be verified (insecure)")
 	}
 
+	// Check tmux availability for persistent sessions
+	tmuxEnabled := !cfg.DisableTmux && terminal.TmuxAvailable()
+	if tmuxEnabled {
+		logger.Info("persistent terminal sessions enabled (tmux)")
+	} else if cfg.DisableTmux {
+		logger.Info("persistent terminal sessions disabled (--no-tmux)")
+	} else {
+		logger.Info("persistent terminal sessions unavailable (tmux not found)")
+	}
+
 	a := &Agent{
 		sessions:     make(map[string]*terminal.PTYSession),
 		idleTimeout:  cfg.IdleTimeout,
@@ -136,6 +150,7 @@ func New(cfg Config) *Agent {
 		permissions:  perms,
 		maxSessions:  maxSessions,
 		shellCommand: cfg.ShellCommand,
+		tmuxEnabled:  tmuxEnabled,
 		log:          logger,
 		auditLog:     auditLog,
 		verifier:     verifier,
@@ -185,11 +200,16 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.log.Info("connected to gateway", "url", a.wsURL)
 
 	// Send immediate heartbeat so gateway knows our agentId
+	var initialSessions []string
+	if a.tmuxEnabled {
+		initialSessions = terminal.ListTmuxSessions()
+	}
 	a.sendMessage(protocol.HeartbeatMessage{
 		Type:      protocol.TypeHeartbeat,
 		AgentID:   a.agentID,
 		ClusterID: a.clusterID,
 		Timestamp: time.Now().Unix(),
+		Sessions:  initialSessions,
 	})
 
 	// Start periodic heartbeat
@@ -294,8 +314,8 @@ func (a *Agent) reconnect(ctx context.Context) error {
 func (a *Agent) shutdown() {
 	a.mu.Lock()
 	for id, s := range a.sessions {
-		a.log.Info("closing session", "session_id", id)
-		s.Close()
+		a.log.Info("detaching session", "session_id", id)
+		s.Close() // Kills PTY viewport; tmux sessions stay alive
 	}
 	a.sessions = make(map[string]*terminal.PTYSession)
 	a.mu.Unlock()
@@ -484,26 +504,45 @@ func (a *Agent) handleSessionOpen(msg protocol.SessionOpenMessage) error {
 		targetDesc = msg.Target.Type
 	}
 
-	session, err := terminal.NewPTYSession(
-		msg.SessionID,
-		msg.Cols,
-		msg.Rows,
-		shellCmd,
-		func(sessionID, data string) {
-			a.sendMessage(protocol.PTYOutputMessage{
-				Type:      protocol.TypePTYOutput,
-				SessionID: sessionID,
-				Data:      data,
-			})
-		},
-		func(sessionID, errMsg string) {
-			a.sendMessage(protocol.SessionErrorMessage{
-				Type:      protocol.TypeSessionError,
-				SessionID: sessionID,
-				Error:     errMsg,
-			})
-		},
-	)
+	onOutput := func(sessionID, data string) {
+		a.sendMessage(protocol.PTYOutputMessage{
+			Type:      protocol.TypePTYOutput,
+			SessionID: sessionID,
+			Data:      data,
+		})
+	}
+	onError := func(sessionID, errMsg string) {
+		a.sendMessage(protocol.SessionErrorMessage{
+			Type:      protocol.TypeSessionError,
+			SessionID: sessionID,
+			Error:     errMsg,
+		})
+	}
+
+	var session *terminal.PTYSession
+	if a.tmuxEnabled {
+		if terminal.TmuxSessionExists(msg.SessionID) {
+			// Resume: attach to existing tmux session
+			cmd := terminal.AttachTmuxCommand(msg.SessionID)
+			session, err = terminal.NewPTYSessionWithCmd(msg.SessionID, msg.Cols, msg.Rows, cmd, onOutput, onError)
+			if err == nil {
+				a.log.Info("session resumed (tmux attach)", "session_id", msg.SessionID, "target", targetDesc)
+			}
+		} else {
+			// New: create tmux session
+			cmd := terminal.NewTmuxCommand(msg.SessionID, msg.Cols, msg.Rows, shellCmd)
+			session, err = terminal.NewPTYSessionWithCmd(msg.SessionID, msg.Cols, msg.Rows, cmd, onOutput, onError)
+			if err == nil {
+				a.log.Info("session created (tmux new)", "session_id", msg.SessionID, "target", targetDesc)
+			}
+		}
+	} else {
+		session, err = terminal.NewPTYSession(msg.SessionID, msg.Cols, msg.Rows, shellCmd, onOutput, onError)
+		if err == nil {
+			a.log.Info("session opened", "session_id", msg.SessionID, "target", targetDesc)
+		}
+	}
+
 	if err != nil {
 		a.sendMessage(protocol.SessionErrorMessage{
 			Type:      protocol.TypeSessionError,
@@ -515,7 +554,6 @@ func (a *Agent) handleSessionOpen(msg protocol.SessionOpenMessage) error {
 	}
 
 	a.sessions[msg.SessionID] = session
-	a.log.Info("session opened", "session_id", msg.SessionID, "target", targetDesc)
 	if a.auditLog != nil {
 		a.auditLog.Log(audit.AuditEntry{
 			SessionID: msg.SessionID,
@@ -592,6 +630,13 @@ func (a *Agent) handleSessionClose(msg protocol.SessionCloseMessage) error {
 			})
 		}
 		session.Close()
+
+		// Destroy the persistent tmux session on explicit close
+		if a.tmuxEnabled {
+			if err := terminal.DestroyTmuxSession(msg.SessionID); err != nil {
+				a.log.Debug("tmux session destroy", "session_id", msg.SessionID, "error", err)
+			}
+		}
 		a.log.Info("session closed", "session_id", msg.SessionID)
 	}
 	return nil
@@ -622,11 +667,16 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			var sessions []string
+			if a.tmuxEnabled {
+				sessions = terminal.ListTmuxSessions()
+			}
 			a.sendMessage(protocol.HeartbeatMessage{
 				Type:      protocol.TypeHeartbeat,
 				AgentID:   a.agentID,
 				ClusterID: a.clusterID,
 				Timestamp: time.Now().Unix(),
+				Sessions:  sessions,
 			})
 		}
 	}

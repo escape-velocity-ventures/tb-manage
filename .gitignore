@@ -14,3 +14,7 @@ dist/tb-manage-*
 # Auto-added by Secret Guardian
 **/keys/*_key
 **/keys/*_key.pub
+
+# Auto-added by Secret Guardian
+nostromo
+nostromo.pub
