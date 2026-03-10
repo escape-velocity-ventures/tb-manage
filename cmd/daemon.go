@@ -90,6 +90,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 
 	gatewayURL := resolveGatewayURL()
+	if gatewayURL == "" && cfg != nil && cfg.Gateway != "" {
+		gatewayURL = cfg.Gateway
+	}
 
 	identity := resolveIdentity()
 	// resolveIdentity returns "token" as default — if neither flag nor env

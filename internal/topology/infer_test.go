@@ -64,10 +64,10 @@ func TestInferRole(t *testing.T) {
 			wantType:   "baremetal",
 		},
 		{
-			name:       "unknown (only loopback)",
+			name:       "unknown (only loopback) — defaults to baremetal",
 			interfaces: []string{"lo"},
 			wantRole:   RoleUnknown,
-			wantType:   "unknown",
+			wantType:   "baremetal",
 		},
 		{
 			name:       "hypervisor with docker bridge",

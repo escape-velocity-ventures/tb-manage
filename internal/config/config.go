@@ -12,6 +12,7 @@ import (
 type Config struct {
 	Token             string        `yaml:"token"`
 	URL               string        `yaml:"url"`
+	Gateway           string        `yaml:"gateway"`
 	Identity          string        `yaml:"identity"` // "token" or "ssh-host-key"
 	AnonKey           string        `yaml:"anon_key"`
 	Profile           string        `yaml:"profile"`

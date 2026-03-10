@@ -28,9 +28,14 @@ type CommandRunner interface {
 // LocalRunner executes commands on the local host.
 type LocalRunner struct{}
 
-// Run executes a command locally via /bin/sh.
+// Run executes a command locally via the platform shell.
 func (r LocalRunner) Run(ctx context.Context, command string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, "powershell", "-NoProfile", "-Command", command)
+	} else {
+		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", command)
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return out, fmt.Errorf("command %q failed: %w (output: %s)", command, err, strings.TrimSpace(string(out)))
