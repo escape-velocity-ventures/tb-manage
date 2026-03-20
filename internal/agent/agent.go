@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -257,8 +259,13 @@ func (a *Agent) connect() error {
 		// SSH host key auth: sign fingerprint:timestamp:nonce and send in headers
 		// (not query params — signatures in URLs leak to logs and proxy caches)
 		ts := strconv.FormatInt(time.Now().Unix(), 10)
-		nonce := fmt.Sprintf("%x", time.Now().UnixNano())
-		message := a.hostIdentity.Fingerprint + ":" + ts + ":" + nonce
+		nonceBytes := make([]byte, 16)
+		if _, err := rand.Read(nonceBytes); err != nil {
+			return fmt.Errorf("generate nonce: %w", err)
+		}
+		nonce := hex.EncodeToString(nonceBytes)
+		// Domain-separated signing: prefix prevents cross-protocol signature abuse
+		message := "tb-manage:ws:v1:" + a.hostIdentity.Fingerprint + ":" + ts + ":" + nonce
 		sig := a.hostIdentity.SignRequest([]byte(message))
 
 		headers.Set("X-TB-Key-Fingerprint", a.hostIdentity.Fingerprint)
@@ -425,10 +432,12 @@ func (a *Agent) buildShellCommand(target *protocol.TerminalTarget) ([]string, st
 		if runtime.GOOS == "windows" {
 			// Windows host terminals route through SSH to localhost.
 			// SSHD is enabled by the installer; the remote side allocates a PTY.
-			// Use StrictHostKeyChecking=no for loopback only — this is a local
-			// connection to the same machine, not a remote host. Loopback host
-			// keys change on reinstall; pinning them would break reconnection.
-			cmd := []string{"ssh", "-tt", "-o", "StrictHostKeyChecking=no", "-o", "NoHostAuthenticationForLocalhost=yes", "--", "127.0.0.1"}
+			// TODO: Replace with Windows ConPTY API to eliminate the SSH hop entirely.
+			// Using UserKnownHostsFile with a pinned key from installation.
+			cmd := []string{"ssh", "-tt",
+				"-o", "StrictHostKeyChecking=yes",
+				"-o", "UserKnownHostsFile=" + windowsLocalhostKnownHosts(),
+				"--", "127.0.0.1"}
 			switch {
 			case target.Shell != "":
 				cmd = append(cmd, target.Shell)
@@ -496,6 +505,19 @@ func (a *Agent) buildShellCommand(target *protocol.TerminalTarget) ([]string, st
 	default:
 		return nil, "UNSUPPORTED_TARGET", fmt.Errorf("unsupported target type: %s", target.Type)
 	}
+}
+
+// windowsLocalhostKnownHosts returns the path to a known_hosts file that
+// contains the localhost SSH host key, pinned during tb-manage installation.
+// If the file doesn't exist, returns a path that ssh will fail against
+// (StrictHostKeyChecking=yes will reject unknown hosts).
+func windowsLocalhostKnownHosts() string {
+	// The installer creates this file with the local sshd host key.
+	dataDir := os.Getenv("PROGRAMDATA")
+	if dataDir == "" {
+		dataDir = `C:\ProgramData`
+	}
+	return dataDir + `\tb-manage\localhost_known_hosts`
 }
 
 func (a *Agent) handleSessionOpen(msg protocol.SessionOpenMessage) error {

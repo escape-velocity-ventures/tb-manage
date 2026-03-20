@@ -3,6 +3,8 @@ package upload
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -93,14 +95,21 @@ func (c *Client) Upload(ctx context.Context, req *EdgeIngestRequest) (*EdgeInges
 			httpReq.Header.Set("apikey", c.anonKey)
 		}
 
-		// SSH host key identity: sign timestamp:nonce:body and send identity headers.
-		// Timestamp + nonce prevent replay attacks (gateway must verify within window).
+		// SSH host key identity: sign domain-separated timestamp:nonce:body.
+		// Timestamp + cryptographic nonce prevent replay attacks.
+		// Gateway must verify timestamp ±30s and reject seen nonces.
 		if c.identityMode == "ssh-host-key" && c.hostIdentity != nil {
 			hostname, _ := os.Hostname()
 			ts := strconv.FormatInt(time.Now().Unix(), 10)
-			nonce := fmt.Sprintf("%x", time.Now().UnixNano())
-			// Sign the concatenation of timestamp, nonce, and body
-			signedPayload := append([]byte(ts+":"+nonce+":"), body...)
+			nonceBytes := make([]byte, 16)
+			if _, err := rand.Read(nonceBytes); err != nil {
+				return nil, fmt.Errorf("generate nonce: %w", err)
+			}
+			nonce := hex.EncodeToString(nonceBytes)
+			// Domain-separated signing: "tb-manage:upload:v1:" prefix prevents
+			// cross-protocol signature abuse (e.g., reusing a WS auth signature
+			// as an upload signature or vice versa)
+			signedPayload := append([]byte("tb-manage:upload:v1:"+ts+":"+nonce+":"), body...)
 			httpReq.Header.Set("X-TB-Node", hostname)
 			httpReq.Header.Set("X-TB-Key-Fingerprint", c.hostIdentity.Fingerprint)
 			httpReq.Header.Set("X-TB-Timestamp", ts)
