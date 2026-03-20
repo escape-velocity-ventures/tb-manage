@@ -28,6 +28,11 @@ var allowedRuntimes = map[string]bool{
 // containerNameRe matches valid container/pod/VM names.
 var containerNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
+// sshHostRe matches valid SSH hostnames per RFC 1123: labels separated by dots,
+// each label starts/ends with alphanumeric, may contain hyphens in the middle.
+// Max 253 chars total (enforced separately via maxNameLen).
+var sshHostRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$`)
+
 const maxNameLen = 253
 
 // ValidateTerminalTarget checks that all fields contain safe, expected values.
@@ -84,11 +89,14 @@ func validateSSHTarget(t *TerminalTarget) error {
 		return fmt.Errorf("ssh target requires a host")
 	}
 
-	// Host must be an IP address or valid hostname (no shell metacharacters)
+	// Host must be an IP address or valid hostname per RFC 1123
 	host := t.Host
+	if len(host) > maxNameLen {
+		return fmt.Errorf("ssh host too long (%d chars, max %d)", len(host), maxNameLen)
+	}
 	if ip := net.ParseIP(host); ip == nil {
-		// Not a raw IP — check it's a valid hostname
-		if !containerNameRe.MatchString(host) {
+		// Not a raw IP — validate as RFC 1123 hostname (allows FQDNs with dots)
+		if !sshHostRe.MatchString(host) {
 			return fmt.Errorf("invalid ssh host: %q", host)
 		}
 	}

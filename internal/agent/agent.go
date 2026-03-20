@@ -491,7 +491,10 @@ func (a *Agent) buildShellCommand(target *protocol.TerminalTarget) ([]string, st
 		if target.Port != 0 {
 			cmd = append(cmd, "-p", fmt.Sprintf("%d", target.Port))
 		}
-		// -o StrictHostKeyChecking=accept-new: accept on first connect, reject changes
+		// TOFU (Trust On First Use): standard SSH model for jump-to-arbitrary-host.
+		// First connection silently accepts and pins the host key; subsequent connections
+		// reject key changes (protecting against MitM after initial trust).
+		// Server-side ACL gates which hosts are reachable via the SSH target type.
 		cmd = append(cmd, "-o", "StrictHostKeyChecking=accept-new")
 		// Build user@host
 		host := target.Host
@@ -511,13 +514,9 @@ func (a *Agent) buildShellCommand(target *protocol.TerminalTarget) ([]string, st
 // contains the localhost SSH host key, pinned during tb-manage installation.
 // If the file doesn't exist, returns a path that ssh will fail against
 // (StrictHostKeyChecking=yes will reject unknown hosts).
+// Hardcoded to C:\ProgramData to avoid PROGRAMDATA env var manipulation.
 func windowsLocalhostKnownHosts() string {
-	// The installer creates this file with the local sshd host key.
-	dataDir := os.Getenv("PROGRAMDATA")
-	if dataDir == "" {
-		dataDir = `C:\ProgramData`
-	}
-	return dataDir + `\tb-manage\localhost_known_hosts`
+	return `C:\ProgramData\tb-manage\localhost_known_hosts`
 }
 
 func (a *Agent) handleSessionOpen(msg protocol.SessionOpenMessage) error {
