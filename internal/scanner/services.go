@@ -49,7 +49,37 @@ func (s *ServicesScanner) Scan(ctx context.Context, runner CommandRunner) (json.
 		info.KubeletRunning = true
 	}
 
+	// Derive remote access availability from listening ports
+	info.RemoteAccess = detectRemoteAccess(info.ListeningPorts)
+
 	return json.Marshal(info)
+}
+
+// detectRemoteAccess inspects listening ports for VNC (5900-5999) and RDP (3389).
+func detectRemoteAccess(ports []ListeningPort) *RemoteAccessInfo {
+	var ra RemoteAccessInfo
+	for _, p := range ports {
+		// VNC: ports 5900-5999 (display :0 through :99)
+		if p.Port >= 5900 && p.Port <= 5999 && ra.VNC == nil {
+			ra.VNC = &RemoteAccessEndpoint{
+				Available:   true,
+				Port:        p.Port,
+				ProcessName: p.ProcessName,
+			}
+		}
+		// RDP: port 3389
+		if p.Port == 3389 && ra.RDP == nil {
+			ra.RDP = &RemoteAccessEndpoint{
+				Available:   true,
+				Port:        p.Port,
+				ProcessName: p.ProcessName,
+			}
+		}
+	}
+	if ra.VNC == nil && ra.RDP == nil {
+		return nil
+	}
+	return &ra
 }
 
 // loadKubeContexts reads kubeconfig and returns all contexts.

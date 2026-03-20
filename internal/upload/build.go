@@ -59,6 +59,28 @@ func BuildRequest(result *scanner.Result) *EdgeIngestRequest {
 			host.Containers = result.Containers
 			host.GPU = result.GPU
 			host.Services = result.Services
+			host.VMs = result.VMs
+
+			// Extract remote access (VNC/RDP) from services scan data
+			if result.Services != nil {
+				var svcInfo scanner.ServicesInfo
+				if err := json.Unmarshal(result.Services, &svcInfo); err == nil && svcInfo.RemoteAccess != nil {
+					if svcInfo.RemoteAccess.VNC != nil {
+						host.VNC = &RemoteAccessEndpoint{
+							Available:   svcInfo.RemoteAccess.VNC.Available,
+							Port:        svcInfo.RemoteAccess.VNC.Port,
+							ProcessName: svcInfo.RemoteAccess.VNC.ProcessName,
+						}
+					}
+					if svcInfo.RemoteAccess.RDP != nil {
+						host.RDP = &RemoteAccessEndpoint{
+							Available:   svcInfo.RemoteAccess.RDP.Available,
+							Port:        svcInfo.RemoteAccess.RDP.Port,
+							ProcessName: svcInfo.RemoteAccess.RDP.ProcessName,
+						}
+					}
+				}
+			}
 
 			req.Host = host
 		}

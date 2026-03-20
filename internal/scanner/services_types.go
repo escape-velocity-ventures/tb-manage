@@ -2,12 +2,13 @@ package scanner
 
 // ServicesInfo is the data collected by the services scanner.
 type ServicesInfo struct {
-	Platforms      []PlatformInfo  `json:"platforms"`
-	KubeContexts   []KubeContext   `json:"kube_contexts,omitempty"`
-	Services       []ServiceEntry  `json:"services,omitempty"`
-	ListeningPorts []ListeningPort `json:"listening_ports,omitempty"`
-	DevTools       []DevTool       `json:"dev_tools,omitempty"`
-	KubeletRunning bool            `json:"kubelet_running"`
+	Platforms      []PlatformInfo    `json:"platforms"`
+	KubeContexts   []KubeContext     `json:"kube_contexts,omitempty"`
+	Services       []ServiceEntry    `json:"services,omitempty"`
+	ListeningPorts []ListeningPort   `json:"listening_ports,omitempty"`
+	DevTools       []DevTool         `json:"dev_tools,omitempty"`
+	KubeletRunning bool              `json:"kubelet_running"`
+	RemoteAccess   *RemoteAccessInfo `json:"remote_access,omitempty"`
 }
 
 // PlatformInfo describes a container/VM platform detected on the host.
@@ -59,4 +60,17 @@ type DevTool struct {
 	Name    string `json:"name"`
 	Version string `json:"version,omitempty"`
 	Path    string `json:"path,omitempty"`
+}
+
+// RemoteAccessInfo describes VNC/RDP availability detected from listening ports.
+type RemoteAccessInfo struct {
+	VNC *RemoteAccessEndpoint `json:"vnc,omitempty"`
+	RDP *RemoteAccessEndpoint `json:"rdp,omitempty"`
+}
+
+// RemoteAccessEndpoint describes a single remote access protocol.
+type RemoteAccessEndpoint struct {
+	Available   bool   `json:"available"`
+	Port        int    `json:"port"`
+	ProcessName string `json:"process_name,omitempty"`
 }

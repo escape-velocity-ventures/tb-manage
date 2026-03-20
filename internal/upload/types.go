@@ -33,10 +33,20 @@ type HostScanResult struct {
 	Kubernetes      *HostKubernetes   `json:"kubernetes,omitempty"`
 
 	// Extra fields go into scan_data via [key: string]: unknown
-	Storage    json.RawMessage   `json:"storage,omitempty"`
-	Containers json.RawMessage   `json:"containers,omitempty"`
-	GPU        json.RawMessage   `json:"gpu,omitempty"`
-	Services   json.RawMessage   `json:"services,omitempty"`
+	Storage    json.RawMessage        `json:"storage,omitempty"`
+	Containers json.RawMessage        `json:"containers,omitempty"`
+	GPU        json.RawMessage        `json:"gpu,omitempty"`
+	Services   json.RawMessage        `json:"services,omitempty"`
+	VMs        json.RawMessage        `json:"vms,omitempty"`
+	VNC        *RemoteAccessEndpoint  `json:"vnc,omitempty"`
+	RDP        *RemoteAccessEndpoint  `json:"rdp,omitempty"`
+}
+
+// RemoteAccessEndpoint describes a VNC or RDP endpoint detected on the host.
+type RemoteAccessEndpoint struct {
+	Available   bool   `json:"available"`
+	Port        int    `json:"port"`
+	ProcessName string `json:"process_name,omitempty"`
 }
 
 // HostSystem matches the system field in HostScanResult.
