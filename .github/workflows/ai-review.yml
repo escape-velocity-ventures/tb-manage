@@ -9,7 +9,7 @@ permissions:
   pull-requests: write
 jobs:
   ai-review:
-    uses: escape-velocity-ventures/workflow-templates/.github/workflows/reusable-ai-review.yml@d4349f503494533b77818426c826bc6a3aab64ab
+    uses: escape-velocity-ventures/workflow-templates/.github/workflows/reusable-ai-review.yml@5adb1ac33dae6fd7aef46f8dc6d84ed4fa29f56c
     with:
       fail-on-warnings: false
       require-general-pass: false
