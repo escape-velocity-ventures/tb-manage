@@ -73,7 +73,7 @@ func NewScanLoop(cfg ScanLoopConfig, logger *slog.Logger) *ScanLoop {
 		// Token is passed through for cluster routing (host key = identity, token = cluster).
 		hostID, err := auth.LoadHostKey("")
 		if err != nil {
-			logger.Error("failed to load host key for scan loop", "error", err)
+			logger.Error("failed to load host key for scan loop — scan data will NOT be uploaded", "error", err)
 		} else {
 			sl.uploader = upload.NewHostKeyClient(cfg.UploadURL, cfg.AnonKey, cfg.Token, hostID)
 		}

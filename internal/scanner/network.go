@@ -82,7 +82,9 @@ func detectCloudMetadata(ctx context.Context) (publicIP, provider string, cloud 
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	client := &http.Client{Timeout: 2 * time.Second}
+	// Per-request timeout must be short enough that sequential probes
+	// (GCP, AWS, Azure, ifconfig.me) fit within the 3s context window.
+	client := &http.Client{Timeout: 500 * time.Millisecond}
 	gcpHeaders := map[string]string{"Metadata-Flavor": "Google"}
 
 	// Try GCP metadata
@@ -121,15 +123,8 @@ func detectCloudMetadata(ctx context.Context) (publicIP, provider string, cloud 
 		return ip, "aws", cm
 	}
 
-	// Try AWS IMDS v1 fallback
-	if ip := httpGetIP(ctx, client, "http://169.254.169.254/latest/meta-data/public-ipv4", nil); ip != "" {
-		cm := &CloudMetadata{Provider: "aws"}
-		cm.InstanceType = httpGetBody(ctx, client, "GET", "http://169.254.169.254/latest/meta-data/instance-type", nil)
-		cm.InstanceID = httpGetBody(ctx, client, "GET", "http://169.254.169.254/latest/meta-data/instance-id", nil)
-		cm.Zone = httpGetBody(ctx, client, "GET", "http://169.254.169.254/latest/meta-data/placement/availability-zone", nil)
-		cm.Region = httpGetBody(ctx, client, "GET", "http://169.254.169.254/latest/meta-data/placement/region", nil)
-		return ip, "aws", cm
-	}
+	// IMDSv1 fallback removed: IMDSv1 is a known SSRF escalation path and is
+	// disabled by default on modern AWS instances. If IMDSv2 fails, we skip AWS.
 
 	// Try Azure IMDS (JSON endpoint for full metadata)
 	if body := httpGetLargeBody(ctx, client, "GET", "http://169.254.169.254/metadata/instance?api-version=2021-02-01", map[string]string{"Metadata": "true"}); body != "" {

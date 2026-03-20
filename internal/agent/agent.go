@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"sync"
 	"syscall"
@@ -253,16 +254,15 @@ func (a *Agent) connect() error {
 	headers := http.Header{}
 
 	if a.identityMode == "ssh-host-key" && a.hostIdentity != nil {
-		// SSH host key auth: sign fingerprint:timestamp and send as query params
+		// SSH host key auth: sign fingerprint:timestamp and send in headers
+		// (not query params — signatures in URLs leak to logs and proxy caches)
 		ts := strconv.FormatInt(time.Now().Unix(), 10)
 		message := a.hostIdentity.Fingerprint + ":" + ts
 		sig := a.hostIdentity.SignRequest([]byte(message))
 
-		q := u.Query()
-		q.Set("fingerprint", a.hostIdentity.Fingerprint)
-		q.Set("timestamp", ts)
-		q.Set("signature", sig)
-		u.RawQuery = q.Encode()
+		headers.Set("X-TB-Key-Fingerprint", a.hostIdentity.Fingerprint)
+		headers.Set("X-TB-Timestamp", ts)
+		headers.Set("X-TB-Signature", sig)
 
 		a.log.Info("connecting with ssh-host-key identity", "fingerprint", a.hostIdentity.Fingerprint)
 	} else {
@@ -411,12 +411,28 @@ func (a *Agent) buildShellCommand(target *protocol.TerminalTarget) ([]string, st
 
 	shell := target.Shell
 	if shell == "" {
-		shell = "/bin/sh"
+		if runtime.GOOS == "windows" {
+			shell = "powershell.exe"
+		} else {
+			shell = "/bin/sh"
+		}
 	}
 
 	switch target.Type {
 	case "host":
-		// Use agent's configured shell or the target's shell override
+		if runtime.GOOS == "windows" {
+			// Windows host terminals route through SSH to localhost.
+			// SSHD is enabled by the installer; the remote side allocates a PTY.
+			cmd := []string{"ssh", "-tt", "-o", "StrictHostKeyChecking=accept-new", "127.0.0.1"}
+			switch {
+			case target.Shell != "":
+				cmd = append(cmd, target.Shell)
+			case len(a.shellCommand) > 0:
+				cmd = append(cmd, a.shellCommand...)
+			}
+			return cmd, "", nil
+		}
+		// Unix: direct PTY
 		if target.Shell != "" {
 			return []string{target.Shell}, "", nil
 		}
@@ -451,6 +467,24 @@ func (a *Agent) buildShellCommand(target *protocol.TerminalTarget) ([]string, st
 			cmd = append(cmd, "-c", target.Container)
 		}
 		cmd = append(cmd, "--", shell)
+		return cmd, "", nil
+
+	case "ssh":
+		if target.Host == "" {
+			return nil, "TARGET_NOT_FOUND", fmt.Errorf("ssh target requires a host")
+		}
+		cmd := []string{"ssh"}
+		if target.Port != 0 {
+			cmd = append(cmd, "-p", fmt.Sprintf("%d", target.Port))
+		}
+		// -o StrictHostKeyChecking=accept-new: accept on first connect, reject changes
+		cmd = append(cmd, "-o", "StrictHostKeyChecking=accept-new")
+		// Build user@host
+		host := target.Host
+		if target.User != "" {
+			host = target.User + "@" + host
+		}
+		cmd = append(cmd, host)
 		return cmd, "", nil
 
 	default:

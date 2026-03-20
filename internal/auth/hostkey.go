@@ -15,8 +15,9 @@ import (
 const DefaultHostKeyPath = "/etc/ssh/ssh_host_ed25519_key"
 
 // HostIdentity holds the SSH host key used for SaaS authentication.
+// The private key is unexported to prevent direct access — use SignRequest.
 type HostIdentity struct {
-	PrivateKey   ed25519.PrivateKey
+	privateKey   ed25519.PrivateKey
 	PublicKey    ed25519.PublicKey
 	Fingerprint  string // SHA256:base64...
 	PublicKeySSH string // "ssh-ed25519 AAAA..." for registration
@@ -50,7 +51,7 @@ func LoadHostKey(path string) (*HostIdentity, error) {
 	}
 
 	return &HostIdentity{
-		PrivateKey:   *edKey,
+		privateKey:   *edKey,
 		PublicKey:    pubKey,
 		Fingerprint:  ssh.FingerprintSHA256(sshPub),
 		PublicKeySSH: string(ssh.MarshalAuthorizedKey(sshPub)),
@@ -59,6 +60,6 @@ func LoadHostKey(path string) (*HostIdentity, error) {
 
 // SignRequest signs a request body with the host's private key.
 func (h *HostIdentity) SignRequest(body []byte) string {
-	sig := ed25519.Sign(h.PrivateKey, body)
+	sig := ed25519.Sign(h.privateKey, body)
 	return base64.StdEncoding.EncodeToString(sig)
 }

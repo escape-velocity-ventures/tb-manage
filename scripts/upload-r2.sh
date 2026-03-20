@@ -2,8 +2,8 @@
 # Upload tb-manage binaries to Cloudflare R2
 set -e
 
-CF_TOKEN=$(op item get REDACTED_1P_ITEM_UUID --vault "REDACTED_VAULT_NAME" --fields label=password --reveal)
-CF_ACCOUNT_ID="REDACTED_CF_ACCOUNT_ID"
+: "${CF_TOKEN:?CF_TOKEN environment variable is required (Cloudflare API token)}"
+: "${CF_ACCOUNT_ID:?CF_ACCOUNT_ID environment variable is required (Cloudflare account ID)}"
 BUCKET="tb-releases"
 DIST="$(dirname "$0")"
 API="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/r2/buckets/$BUCKET/objects"
