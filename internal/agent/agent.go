@@ -254,14 +254,16 @@ func (a *Agent) connect() error {
 	headers := http.Header{}
 
 	if a.identityMode == "ssh-host-key" && a.hostIdentity != nil {
-		// SSH host key auth: sign fingerprint:timestamp and send in headers
+		// SSH host key auth: sign fingerprint:timestamp:nonce and send in headers
 		// (not query params — signatures in URLs leak to logs and proxy caches)
 		ts := strconv.FormatInt(time.Now().Unix(), 10)
-		message := a.hostIdentity.Fingerprint + ":" + ts
+		nonce := fmt.Sprintf("%x", time.Now().UnixNano())
+		message := a.hostIdentity.Fingerprint + ":" + ts + ":" + nonce
 		sig := a.hostIdentity.SignRequest([]byte(message))
 
 		headers.Set("X-TB-Key-Fingerprint", a.hostIdentity.Fingerprint)
 		headers.Set("X-TB-Timestamp", ts)
+		headers.Set("X-TB-Nonce", nonce)
 		headers.Set("X-TB-Signature", sig)
 
 		a.log.Info("connecting with ssh-host-key identity", "fingerprint", a.hostIdentity.Fingerprint)
@@ -423,7 +425,10 @@ func (a *Agent) buildShellCommand(target *protocol.TerminalTarget) ([]string, st
 		if runtime.GOOS == "windows" {
 			// Windows host terminals route through SSH to localhost.
 			// SSHD is enabled by the installer; the remote side allocates a PTY.
-			cmd := []string{"ssh", "-tt", "-o", "StrictHostKeyChecking=accept-new", "127.0.0.1"}
+			// Use StrictHostKeyChecking=no for loopback only — this is a local
+			// connection to the same machine, not a remote host. Loopback host
+			// keys change on reinstall; pinning them would break reconnection.
+			cmd := []string{"ssh", "-tt", "-o", "StrictHostKeyChecking=no", "-o", "NoHostAuthenticationForLocalhost=yes", "--", "127.0.0.1"}
 			switch {
 			case target.Shell != "":
 				cmd = append(cmd, target.Shell)
@@ -484,7 +489,8 @@ func (a *Agent) buildShellCommand(target *protocol.TerminalTarget) ([]string, st
 		if target.User != "" {
 			host = target.User + "@" + host
 		}
-		cmd = append(cmd, host)
+		// Use -- to prevent argument injection via crafted hostnames
+		cmd = append(cmd, "--", host)
 		return cmd, "", nil
 
 	default:

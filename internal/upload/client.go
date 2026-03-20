@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/tinkerbelle-io/tb-manage/internal/auth"
@@ -92,12 +93,19 @@ func (c *Client) Upload(ctx context.Context, req *EdgeIngestRequest) (*EdgeInges
 			httpReq.Header.Set("apikey", c.anonKey)
 		}
 
-		// SSH host key identity: sign request body and send identity headers
+		// SSH host key identity: sign timestamp:nonce:body and send identity headers.
+		// Timestamp + nonce prevent replay attacks (gateway must verify within window).
 		if c.identityMode == "ssh-host-key" && c.hostIdentity != nil {
 			hostname, _ := os.Hostname()
+			ts := strconv.FormatInt(time.Now().Unix(), 10)
+			nonce := fmt.Sprintf("%x", time.Now().UnixNano())
+			// Sign the concatenation of timestamp, nonce, and body
+			signedPayload := append([]byte(ts+":"+nonce+":"), body...)
 			httpReq.Header.Set("X-TB-Node", hostname)
 			httpReq.Header.Set("X-TB-Key-Fingerprint", c.hostIdentity.Fingerprint)
-			httpReq.Header.Set("X-TB-Signature", c.hostIdentity.SignRequest(body))
+			httpReq.Header.Set("X-TB-Timestamp", ts)
+			httpReq.Header.Set("X-TB-Nonce", nonce)
+			httpReq.Header.Set("X-TB-Signature", c.hostIdentity.SignRequest(signedPayload))
 		}
 
 		resp, err := c.httpClient.Do(httpReq)
