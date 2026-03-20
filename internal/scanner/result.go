@@ -13,6 +13,9 @@ type Result struct {
 	IoT        json.RawMessage            `json:"iot,omitempty"`
 	GPU        json.RawMessage            `json:"gpu,omitempty"`
 	Services   json.RawMessage            `json:"services,omitempty"`
+	Compliance json.RawMessage            `json:"compliance,omitempty"`
+	Patches    json.RawMessage            `json:"patches,omitempty"`
+	VMs        json.RawMessage            `json:"vms,omitempty"`
 	Phases     map[string]json.RawMessage `json:"-"`
 	Meta       ResultMeta                 `json:"meta"`
 }
@@ -58,5 +61,11 @@ func (r *Result) Set(name string, data json.RawMessage) {
 		r.GPU = data
 	case "services":
 		r.Services = data
+	case "compliance":
+		r.Compliance = data
+	case "patches":
+		r.Patches = data
+	case "vms":
+		r.VMs = data
 	}
 }
