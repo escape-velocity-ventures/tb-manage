@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tinkerbelle-io/tb-manage/internal/agent"
 	"github.com/tinkerbelle-io/tb-manage/internal/auth"
+	"github.com/tinkerbelle-io/tb-manage/internal/casync"
 	"github.com/tinkerbelle-io/tb-manage/internal/config"
 	"github.com/tinkerbelle-io/tb-manage/internal/logging"
 	"github.com/tinkerbelle-io/tb-manage/internal/upload"
@@ -33,6 +34,11 @@ var (
 	flagAuditLog            string
 	flagPublicKey           string
 	flagNoTmux              bool
+	flagCAKeySync           bool
+	flagCAKeyPath           string
+	flagCAStatePath         string
+	flagCAOverlapWindow     time.Duration
+	flagCASyncInterval      time.Duration
 )
 
 var daemonCmd = &cobra.Command{
@@ -69,6 +75,11 @@ func init() {
 	daemonCmd.Flags().StringVar(&flagPublicKey, "public-key", "", "Ed25519 public key for command signature verification (hex or base64, env: TB_PUBLIC_KEY)")
 	daemonCmd.Flags().StringVar(&flagShellCommand, "shell-command", "", "Custom shell command for PTY sessions (e.g., 'nsenter -t 1 -m -u -i -n -- /bin/bash')")
 	daemonCmd.Flags().BoolVar(&flagNoTmux, "no-tmux", false, "Disable persistent terminal sessions (no tmux)")
+	daemonCmd.Flags().BoolVar(&flagCAKeySync, "ca-key-sync", false, "Enable SSH CA public key synchronization (env: TB_CA_KEY_SYNC)")
+	daemonCmd.Flags().StringVar(&flagCAKeyPath, "ca-key-path", "/etc/ssh/tb_ca.pub", "Path for SSH CA public key file")
+	daemonCmd.Flags().StringVar(&flagCAStatePath, "ca-state-path", "/var/lib/tb-manage/ca-rotation.json", "Path for CA rotation state file")
+	daemonCmd.Flags().DurationVar(&flagCAOverlapWindow, "ca-overlap-window", 24*time.Hour, "Overlap window for CA key rotation")
+	daemonCmd.Flags().DurationVar(&flagCASyncInterval, "ca-sync-interval", 6*time.Hour, "How often to sync CA public key from SaaS")
 	rootCmd.AddCommand(daemonCmd)
 }
 
@@ -190,6 +201,27 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		slog.Info("loaded SSH host key for gateway auth", "fingerprint", hi.Fingerprint)
 	}
 
+	// Build CA sync config if enabled
+	var caSyncCfg *casync.Config
+	caKeySync := flagCAKeySync || resolveEnv("TB_CA_KEY_SYNC") == "true"
+	if caKeySync && saasURL != "" {
+		caSyncCfg = &casync.Config{
+			SaaSURL:       saasURL,
+			Token:         token,
+			AnonKey:       resolveAnonKey(),
+			CAKeyPath:     flagCAKeyPath,
+			StatePath:     flagCAStatePath,
+			OverlapWindow: flagCAOverlapWindow,
+			SyncInterval:  flagCASyncInterval,
+			RestartSSHD:   true,
+		}
+		slog.Info("CA key sync enabled",
+			"key_path", flagCAKeyPath,
+			"sync_interval", flagCASyncInterval,
+			"overlap_window", flagCAOverlapWindow,
+		)
+	}
+
 	a := agent.New(agent.Config{
 		WSURL:        gatewayURL,
 		Token:        token,
@@ -205,6 +237,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		IdentityMode:       identity,
 		HostIdentity:       hostIdentity,
 		DisableTmux:        flagNoTmux,
+		CASyncConfig:       caSyncCfg,
 	})
 
 	return a.Run(context.Background())

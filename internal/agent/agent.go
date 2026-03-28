@@ -20,6 +20,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/tinkerbelle-io/tb-manage/internal/audit"
 	"github.com/tinkerbelle-io/tb-manage/internal/auth"
+	"github.com/tinkerbelle-io/tb-manage/internal/casync"
 	"github.com/tinkerbelle-io/tb-manage/internal/signing"
 	"github.com/tinkerbelle-io/tb-manage/internal/protocol"
 	"github.com/tinkerbelle-io/tb-manage/internal/terminal"
@@ -66,7 +67,11 @@ type Agent struct {
 
 	// Scan loop
 	scanLoop *ScanLoop
-	log      *slog.Logger
+
+	// CA key sync
+	caSyncer *casync.Syncer
+
+	log *slog.Logger
 }
 
 const (
@@ -90,6 +95,7 @@ type Config struct {
 	IdentityMode       string            // "token" or "ssh-host-key"
 	HostIdentity       *auth.HostIdentity // SSH host key identity (when IdentityMode == "ssh-host-key")
 	DisableTmux        bool               // Disable persistent terminal sessions (no tmux)
+	CASyncConfig       *casync.Config     // nil = no CA key sync
 }
 
 // New creates a new Agent (does not connect yet).
@@ -163,6 +169,10 @@ func New(cfg Config) *Agent {
 		a.scanLoop = NewScanLoop(*cfg.ScanConfig, logger)
 	}
 
+	if cfg.CASyncConfig != nil {
+		a.caSyncer = casync.NewSyncer(*cfg.CASyncConfig, logger)
+	}
+
 	return a
 }
 
@@ -186,6 +196,11 @@ func (a *Agent) Run(ctx context.Context) error {
 	// Start scan loop if configured
 	if a.scanLoop != nil {
 		go a.scanLoop.Run(ctx)
+	}
+
+	// Start CA key sync loop if configured
+	if a.caSyncer != nil {
+		go a.caSyncer.Run(ctx)
 	}
 
 	// If no WebSocket URL, run scan-only mode
