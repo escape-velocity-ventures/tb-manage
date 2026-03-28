@@ -129,6 +129,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		excludeNS = cfg.ExcludeNamespaces
 	}
 
+	// Resolve anon key once — used by both scan loop and CA sync
+	anonKey := resolveAnonKey()
+	if anonKey == "" && cfg != nil && cfg.AnonKey != "" {
+		anonKey = cfg.AnonKey
+	}
+
 	// Build scan loop config
 	var scanCfg *agent.ScanLoopConfig
 
@@ -164,10 +170,6 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			DryRun:                 flagDryRun,
 		}
 	} else if saasURL != "" {
-		anonKey := resolveAnonKey()
-		if anonKey == "" && cfg != nil && cfg.AnonKey != "" {
-			anonKey = cfg.AnonKey
-		}
 		scanCfg = &agent.ScanLoopConfig{
 			Profile:                flagDaemonProfile,
 			Interval:               flagScanInterval,
@@ -208,7 +210,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		caSyncCfg = &casync.Config{
 			SaaSURL:       saasURL,
 			Token:         token,
-			AnonKey:       resolveAnonKey(),
+			AnonKey:       anonKey,
 			CAKeyPath:     flagCAKeyPath,
 			StatePath:     flagCAStatePath,
 			OverlapWindow: flagCAOverlapWindow,
@@ -220,6 +222,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			"sync_interval", flagCASyncInterval,
 			"overlap_window", flagCAOverlapWindow,
 		)
+	}
+
+	// Validate gateway URL scheme (reject insecure ws:// by default)
+	if err := validateGatewayURL(gatewayURL, false); err != nil {
+		return err
 	}
 
 	a := agent.New(agent.Config{

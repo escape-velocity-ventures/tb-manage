@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -40,7 +41,7 @@ func runPower(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	if len(caps.Providers) > 0 {
-		printKV("Providers:", joinStrings(caps.Providers))
+		printKV("Providers:", strings.Join(caps.Providers, ", "))
 	} else {
 		fmt.Println("  No power providers detected.")
 		return nil

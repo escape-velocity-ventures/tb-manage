@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -71,7 +72,7 @@ func runIoT(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	if len(result.Providers) > 0 {
-		printKV("Providers:", joinStrings(result.Providers))
+		printKV("Providers:", strings.Join(result.Providers, ", "))
 	} else {
 		fmt.Println("  No IoT providers detected.")
 		return nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -72,24 +73,13 @@ func runContainers(cmd *cobra.Command, args []string) error {
 	if len(info.Images) > 0 {
 		summary := fmt.Sprintf("%d", len(info.Images))
 		if len(info.Images) <= 5 {
-			summary += " (" + joinStrings(info.Images) + ")"
+			summary += " (" + strings.Join(info.Images, ", ") + ")"
 		} else {
-			summary += " (" + joinStrings(info.Images[:3]) + ", ...)"
+			summary += " (" + strings.Join(info.Images[:3], ", ") + ", ...)"
 		}
 		fmt.Printf("\n  Images: %s\n", summary)
 	}
 	fmt.Println()
 
 	return nil
-}
-
-func joinStrings(ss []string) string {
-	result := ""
-	for i, s := range ss {
-		if i > 0 {
-			result += ", "
-		}
-		result += s
-	}
-	return result
 }
