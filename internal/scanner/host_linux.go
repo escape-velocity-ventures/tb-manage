@@ -41,5 +41,18 @@ func collectHostInfo(ctx context.Context, runner CommandRunner, info *HostInfo) 
 		}
 	}
 
+	// Serial number from DMI/SMBIOS (requires root or readable sysfs)
+	if out, err := runner.Run(ctx, `cat /sys/class/dmi/id/product_serial 2>/dev/null`); err == nil {
+		serial := strings.TrimSpace(string(out))
+		if !IsJunkSerial(serial) {
+			info.System.SerialNumber = serial
+		}
+	}
+
+	// Machine ID (always readable, unique per OS install)
+	if out, err := runner.Run(ctx, `cat /etc/machine-id 2>/dev/null`); err == nil {
+		info.System.MachineID = strings.TrimSpace(string(out))
+	}
+
 	return nil
 }

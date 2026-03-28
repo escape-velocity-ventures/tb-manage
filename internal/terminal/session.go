@@ -56,6 +56,24 @@ func NewPTYSession(id string, cols, rows int, shellCmd []string, onOutput func(s
 	}
 	cmd.Env = append(filteredEnv(), "TERM=xterm-256color")
 
+	return NewPTYSessionWithCmd(id, cols, rows, cmd, onOutput, onError)
+}
+
+// NewPTYSessionWithCmd starts a PTY session using a pre-built exec.Cmd.
+// This allows callers to provide custom commands (e.g., tmux attach) while
+// reusing the same PTY lifecycle management.
+func NewPTYSessionWithCmd(id string, cols, rows int, cmd *exec.Cmd, onOutput func(string, string), onError func(string, string)) (*PTYSession, error) {
+	if cols <= 0 {
+		cols = 80
+	}
+	if rows <= 0 {
+		rows = 24
+	}
+
+	if cmd.Env == nil {
+		cmd.Env = append(filteredEnv(), "TERM=xterm-256color")
+	}
+
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{
 		Cols: uint16(cols),
 		Rows: uint16(rows),

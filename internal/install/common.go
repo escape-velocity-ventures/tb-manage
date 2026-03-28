@@ -21,9 +21,10 @@ const (
 
 // InstallConfig holds the parameters for installation.
 type InstallConfig struct {
-	Token   string
-	URL     string
-	Profile string
+	Token    string
+	URL      string
+	Profile  string
+	Identity string
 }
 
 // ServiceStatus holds the current state of the installed service.
@@ -51,9 +52,14 @@ func WriteConfig(cfg InstallConfig) error {
 	}
 
 	data := map[string]interface{}{
-		"token":   cfg.Token,
 		"url":     cfg.URL,
 		"profile": cfg.Profile,
+	}
+	if cfg.Token != "" {
+		data["token"] = cfg.Token
+	}
+	if cfg.Identity != "" {
+		data["identity"] = cfg.Identity
 	}
 
 	out, err := yaml.Marshal(data)

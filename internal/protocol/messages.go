@@ -18,15 +18,18 @@ type Envelope struct {
 }
 
 // TerminalTarget specifies what to connect to within a host.
-// Type must be one of: "host", "lima", "docker", "k8s-pod".
+// Type must be one of: "host", "lima", "docker", "k8s-pod", "ssh".
 type TerminalTarget struct {
-	Type      string `json:"type"`                // host | lima | docker | k8s-pod
-	Name      string `json:"name,omitempty"`      // lima VM name
+	Type      string `json:"type"`                // host | lima | docker | k8s-pod | ssh
+	Name      string `json:"name,omitempty"`      // lima VM name or ssh display name
 	Container string `json:"container,omitempty"` // docker container or k8s container
 	Runtime   string `json:"runtime,omitempty"`   // docker | podman
 	Pod       string `json:"pod,omitempty"`       // k8s pod name
 	Namespace string `json:"namespace,omitempty"` // k8s namespace
 	Shell     string `json:"shell,omitempty"`     // override shell
+	Host      string `json:"host,omitempty"`      // ssh target (user@ip or ip)
+	User      string `json:"user,omitempty"`      // ssh user (if host doesn't include user@)
+	Port      int    `json:"port,omitempty"`      // ssh port (default 22)
 }
 
 type SessionOpenMessage struct {
@@ -76,8 +79,9 @@ type PTYResizeMessage struct {
 }
 
 type HeartbeatMessage struct {
-	Type      string `json:"type"`
-	AgentID   string `json:"agentId"`
-	ClusterID string `json:"clusterId"`
-	Timestamp int64  `json:"timestamp"`
+	Type      string   `json:"type"`
+	AgentID   string   `json:"agentId"`
+	ClusterID string   `json:"clusterId"`
+	Timestamp int64    `json:"timestamp"`
+	Sessions  []string `json:"sessions,omitempty"` // Active persistent (tmux) session IDs
 }

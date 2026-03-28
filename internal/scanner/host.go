@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"runtime"
+	"strings"
 )
 
 // HostInfo is the data collected by the host scanner.
@@ -16,12 +17,31 @@ type HostInfo struct {
 
 // SystemInfo contains OS and hardware details.
 type SystemInfo struct {
-	OS        string  `json:"os"`
-	OSVersion string  `json:"os_version,omitempty"`
-	Arch      string  `json:"arch"`
-	CPUModel  string  `json:"cpu_model,omitempty"`
-	CPUCores  int     `json:"cpu_cores"`
-	MemoryGB  float64 `json:"memory_gb"`
+	OS           string  `json:"os"`
+	OSVersion    string  `json:"os_version,omitempty"`
+	Arch         string  `json:"arch"`
+	CPUModel     string  `json:"cpu_model,omitempty"`
+	CPUCores     int     `json:"cpu_cores"`
+	MemoryGB     float64 `json:"memory_gb"`
+	SerialNumber string  `json:"serial_number,omitempty"`
+	MachineID    string  `json:"machine_id,omitempty"`
+}
+
+// junkSerials are DMI serial values that indicate no real serial is available.
+var junkSerials = map[string]bool{
+	"":                          true,
+	"0":                         true,
+	"none":                      true,
+	"not specified":             true,
+	"to be filled by o.e.m.":   true,
+	"default string":           true,
+	"system serial number":     true,
+	"chassis serial number":    true,
+}
+
+// IsJunkSerial returns true if the serial is a known placeholder.
+func IsJunkSerial(s string) bool {
+	return junkSerials[strings.ToLower(strings.TrimSpace(s))]
 }
 
 // HostScanner collects basic host information.

@@ -2,6 +2,7 @@ package upload
 
 import (
 	"encoding/json"
+	"math"
 
 	"github.com/tinkerbelle-io/tb-manage/internal/scanner"
 )
@@ -38,6 +39,8 @@ func BuildRequest(result *scanner.Result) *EdgeIngestRequest {
 			if result.Network != nil {
 				var netInfo scanner.NetworkInfo
 				if err := json.Unmarshal(result.Network, &netInfo); err == nil {
+					host.Network.PublicIP = netInfo.PublicIP
+					host.Network.CloudProvider = netInfo.CloudProvider
 					for _, iface := range netInfo.Interfaces {
 						host.Network.Interfaces = append(host.Network.Interfaces, HostInterface{
 							Name: iface.Name,
@@ -45,11 +48,39 @@ func BuildRequest(result *scanner.Result) *EdgeIngestRequest {
 							MAC:  iface.MAC,
 						})
 					}
+					// If cloud provider detected, override host type to "cloud"
+					if netInfo.CloudProvider != "" && host.Type != "vm" {
+						host.Type = "cloud"
+					}
 				}
 			}
 
 			host.Storage = result.Storage
 			host.Containers = result.Containers
+			host.GPU = result.GPU
+			host.Services = result.Services
+			host.VMs = result.VMs
+
+			// Extract remote access (VNC/RDP) from services scan data
+			if result.Services != nil {
+				var svcInfo scanner.ServicesInfo
+				if err := json.Unmarshal(result.Services, &svcInfo); err == nil && svcInfo.RemoteAccess != nil {
+					if svcInfo.RemoteAccess.VNC != nil {
+						host.VNC = &RemoteAccessEndpoint{
+							Available:   svcInfo.RemoteAccess.VNC.Available,
+							Port:        svcInfo.RemoteAccess.VNC.Port,
+							ProcessName: svcInfo.RemoteAccess.VNC.ProcessName,
+						}
+					}
+					if svcInfo.RemoteAccess.RDP != nil {
+						host.RDP = &RemoteAccessEndpoint{
+							Available:   svcInfo.RemoteAccess.RDP.Available,
+							Port:        svcInfo.RemoteAccess.RDP.Port,
+							ProcessName: svcInfo.RemoteAccess.RDP.ProcessName,
+						}
+					}
+				}
+			}
 
 			req.Host = host
 		}
@@ -64,4 +95,63 @@ func BuildRequest(result *scanner.Result) *EdgeIngestRequest {
 	}
 
 	return req
+}
+
+// BuildNodeHostRequests converts cluster node scan results into individual
+// EdgeIngestRequests for host discovery. Each node becomes a minimal host
+// entry with discovery_method="k8s_api".
+func BuildNodeHostRequests(clusterData json.RawMessage, clusterName, version string) []*EdgeIngestRequest {
+	var cluster scanner.ClusterScanResult
+	if err := json.Unmarshal(clusterData, &cluster); err != nil {
+		return nil
+	}
+
+	var requests []*EdgeIngestRequest
+	for _, node := range cluster.Nodes {
+		// Convert memory from bytes to GB (rounded to 1 decimal)
+		memoryGB := math.Round(float64(node.MemoryBytes)/1073741824.0*10) / 10
+
+		// Build primary IP from node addresses
+		primaryIP := node.InternalIP
+		if primaryIP == "" {
+			primaryIP = node.ExternalIP
+		}
+
+		// Build interfaces from known IPs
+		var interfaces []HostInterface
+		if node.InternalIP != "" {
+			interfaces = append(interfaces, HostInterface{Name: "internal", IP: node.InternalIP})
+		}
+		if node.ExternalIP != "" {
+			interfaces = append(interfaces, HostInterface{Name: "external", IP: node.ExternalIP})
+		}
+
+		req := &EdgeIngestRequest{
+			Host: &HostScanResult{
+				Name:            node.Name,
+				Type:            "baremetal",
+				DiscoveryMethod: "k8s_api",
+				System: HostSystem{
+					OS:       node.OS,
+					Arch:     node.Arch,
+					CPUCores: node.CPUCores,
+					MemoryGB: memoryGB,
+				},
+				Network: HostNetwork{
+					Hostname:   node.Name,
+					Interfaces: interfaces,
+				},
+				Kubernetes: &HostKubernetes{
+					ClusterName: clusterName,
+				},
+			},
+			Meta: EdgeIngestMeta{
+				Version:    version,
+				Phases:     []string{"k8s_node_discovery"},
+				SourceHost: "controller",
+			},
+		}
+		requests = append(requests, req)
+	}
+	return requests
 }

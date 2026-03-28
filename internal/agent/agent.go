@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -9,12 +11,16 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/tinkerbelle-io/tb-manage/internal/audit"
+	"github.com/tinkerbelle-io/tb-manage/internal/auth"
+	"github.com/tinkerbelle-io/tb-manage/internal/casync"
 	"github.com/tinkerbelle-io/tb-manage/internal/signing"
 	"github.com/tinkerbelle-io/tb-manage/internal/protocol"
 	"github.com/tinkerbelle-io/tb-manage/internal/terminal"
@@ -41,12 +47,17 @@ type Agent struct {
 	wsURL       string
 	token              string
 	tokenInURLFallback bool
+	identityMode       string
+	hostIdentity       *auth.HostIdentity
 	writeMu     sync.Mutex
 
 	// Permissions
 	permissions  map[string]bool
 	maxSessions  int
 	shellCommand []string
+
+	// Persistent sessions (tmux)
+	tmuxEnabled bool
 
 	// Audit
 	auditLog *audit.AuditLogger
@@ -56,7 +67,11 @@ type Agent struct {
 
 	// Scan loop
 	scanLoop *ScanLoop
-	log      *slog.Logger
+
+	// CA key sync
+	caSyncer *casync.Syncer
+
+	log *slog.Logger
 }
 
 const (
@@ -77,6 +92,10 @@ type Config struct {
 	TokenInURLFallback bool     // DEPRECATED: also send token in URL query param for migration
 	AuditLogPath       string   // Custom audit log path (empty = default)
 	PublicKey          string   // Ed25519 public key for command verification (hex or base64)
+	IdentityMode       string            // "token" or "ssh-host-key"
+	HostIdentity       *auth.HostIdentity // SSH host key identity (when IdentityMode == "ssh-host-key")
+	DisableTmux        bool               // Disable persistent terminal sessions (no tmux)
+	CASyncConfig       *casync.Config     // nil = no CA key sync
 }
 
 // New creates a new Agent (does not connect yet).
@@ -117,6 +136,16 @@ func New(cfg Config) *Agent {
 		logger.Warn("no public key configured — commands will NOT be verified (insecure)")
 	}
 
+	// Check tmux availability for persistent sessions
+	tmuxEnabled := !cfg.DisableTmux && terminal.TmuxAvailable()
+	if tmuxEnabled {
+		logger.Info("persistent terminal sessions enabled (tmux)")
+	} else if cfg.DisableTmux {
+		logger.Info("persistent terminal sessions disabled (--no-tmux)")
+	} else {
+		logger.Info("persistent terminal sessions unavailable (tmux not found)")
+	}
+
 	a := &Agent{
 		sessions:     make(map[string]*terminal.PTYSession),
 		idleTimeout:  cfg.IdleTimeout,
@@ -125,9 +154,12 @@ func New(cfg Config) *Agent {
 		wsURL:        cfg.WSURL,
 		token:              cfg.Token,
 		tokenInURLFallback: cfg.TokenInURLFallback,
+		identityMode:       cfg.IdentityMode,
+		hostIdentity:       cfg.HostIdentity,
 		permissions:  perms,
 		maxSessions:  maxSessions,
 		shellCommand: cfg.ShellCommand,
+		tmuxEnabled:  tmuxEnabled,
 		log:          logger,
 		auditLog:     auditLog,
 		verifier:     verifier,
@@ -135,6 +167,10 @@ func New(cfg Config) *Agent {
 
 	if cfg.ScanConfig != nil {
 		a.scanLoop = NewScanLoop(*cfg.ScanConfig, logger)
+	}
+
+	if cfg.CASyncConfig != nil {
+		a.caSyncer = casync.NewSyncer(*cfg.CASyncConfig, logger)
 	}
 
 	return a
@@ -162,6 +198,11 @@ func (a *Agent) Run(ctx context.Context) error {
 		go a.scanLoop.Run(ctx)
 	}
 
+	// Start CA key sync loop if configured
+	if a.caSyncer != nil {
+		go a.caSyncer.Run(ctx)
+	}
+
 	// If no WebSocket URL, run scan-only mode
 	if a.wsURL == "" {
 		a.log.Info("no WebSocket URL configured, running in scan-only mode")
@@ -177,11 +218,16 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.log.Info("connected to gateway", "url", a.wsURL)
 
 	// Send immediate heartbeat so gateway knows our agentId
+	var initialSessions []string
+	if a.tmuxEnabled {
+		initialSessions = terminal.ListTmuxSessions()
+	}
 	a.sendMessage(protocol.HeartbeatMessage{
 		Type:      protocol.TypeHeartbeat,
 		AgentID:   a.agentID,
 		ClusterID: a.clusterID,
 		Timestamp: time.Now().Unix(),
+		Sessions:  initialSessions,
 	})
 
 	// Start periodic heartbeat
@@ -222,16 +268,38 @@ func (a *Agent) connect() error {
 		return err
 	}
 
-	// Always send token in Authorization header (secure)
 	headers := http.Header{}
-	headers.Set("Authorization", "Bearer "+a.token)
 
-	// DEPRECATED: also send token in URL query param for backward compatibility
-	if a.tokenInURLFallback {
-		a.log.Warn("sending token in URL query parameter is deprecated; set token_in_url_fallback: false once gateway supports Authorization header")
-		q := u.Query()
-		q.Set("token", a.token)
-		u.RawQuery = q.Encode()
+	if a.identityMode == "ssh-host-key" && a.hostIdentity != nil {
+		// SSH host key auth: sign fingerprint:timestamp:nonce and send in headers
+		// (not query params — signatures in URLs leak to logs and proxy caches)
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		nonceBytes := make([]byte, 16)
+		if _, err := rand.Read(nonceBytes); err != nil {
+			return fmt.Errorf("generate nonce: %w", err)
+		}
+		nonce := hex.EncodeToString(nonceBytes)
+		// Domain-separated signing: prefix prevents cross-protocol signature abuse
+		message := "tb-manage:ws:v1:" + a.hostIdentity.Fingerprint + ":" + ts + ":" + nonce
+		sig := a.hostIdentity.SignRequest([]byte(message))
+
+		headers.Set("X-TB-Key-Fingerprint", a.hostIdentity.Fingerprint)
+		headers.Set("X-TB-Timestamp", ts)
+		headers.Set("X-TB-Nonce", nonce)
+		headers.Set("X-TB-Signature", sig)
+
+		a.log.Info("connecting with ssh-host-key identity", "fingerprint", a.hostIdentity.Fingerprint)
+	} else {
+		// Token auth (existing path)
+		headers.Set("Authorization", "Bearer "+a.token)
+
+		// DEPRECATED: also send token in URL query param for backward compatibility
+		if a.tokenInURLFallback {
+			a.log.Warn("sending token in URL query parameter is deprecated; set token_in_url_fallback: false once gateway supports Authorization header")
+			q := u.Query()
+			q.Set("token", a.token)
+			u.RawQuery = q.Encode()
+		}
 	}
 
 	conn, _, err := websocket.DefaultDialer.Dial(u.String(), headers)
@@ -270,8 +338,8 @@ func (a *Agent) reconnect(ctx context.Context) error {
 func (a *Agent) shutdown() {
 	a.mu.Lock()
 	for id, s := range a.sessions {
-		a.log.Info("closing session", "session_id", id)
-		s.Close()
+		a.log.Info("detaching session", "session_id", id)
+		s.Close() // Kills PTY viewport; tmux sessions stay alive
 	}
 	a.sessions = make(map[string]*terminal.PTYSession)
 	a.mu.Unlock()
@@ -367,12 +435,33 @@ func (a *Agent) buildShellCommand(target *protocol.TerminalTarget) ([]string, st
 
 	shell := target.Shell
 	if shell == "" {
-		shell = "/bin/sh"
+		if runtime.GOOS == "windows" {
+			shell = "powershell.exe"
+		} else {
+			shell = "/bin/sh"
+		}
 	}
 
 	switch target.Type {
 	case "host":
-		// Use agent's configured shell or the target's shell override
+		if runtime.GOOS == "windows" {
+			// Windows host terminals route through SSH to localhost.
+			// SSHD is enabled by the installer; the remote side allocates a PTY.
+			// TODO: Replace with Windows ConPTY API to eliminate the SSH hop entirely.
+			// Using UserKnownHostsFile with a pinned key from installation.
+			cmd := []string{"ssh", "-tt",
+				"-o", "StrictHostKeyChecking=yes",
+				"-o", "UserKnownHostsFile=" + windowsLocalhostKnownHosts(),
+				"--", "127.0.0.1"}
+			switch {
+			case target.Shell != "":
+				cmd = append(cmd, target.Shell)
+			case len(a.shellCommand) > 0:
+				cmd = append(cmd, a.shellCommand...)
+			}
+			return cmd, "", nil
+		}
+		// Unix: direct PTY
 		if target.Shell != "" {
 			return []string{target.Shell}, "", nil
 		}
@@ -409,9 +498,40 @@ func (a *Agent) buildShellCommand(target *protocol.TerminalTarget) ([]string, st
 		cmd = append(cmd, "--", shell)
 		return cmd, "", nil
 
+	case "ssh":
+		if target.Host == "" {
+			return nil, "TARGET_NOT_FOUND", fmt.Errorf("ssh target requires a host")
+		}
+		cmd := []string{"ssh"}
+		if target.Port != 0 {
+			cmd = append(cmd, "-p", fmt.Sprintf("%d", target.Port))
+		}
+		// TOFU (Trust On First Use): standard SSH model for jump-to-arbitrary-host.
+		// First connection silently accepts and pins the host key; subsequent connections
+		// reject key changes (protecting against MitM after initial trust).
+		// Server-side ACL gates which hosts are reachable via the SSH target type.
+		cmd = append(cmd, "-o", "StrictHostKeyChecking=accept-new")
+		// Build user@host
+		host := target.Host
+		if target.User != "" {
+			host = target.User + "@" + host
+		}
+		// Use -- to prevent argument injection via crafted hostnames
+		cmd = append(cmd, "--", host)
+		return cmd, "", nil
+
 	default:
 		return nil, "UNSUPPORTED_TARGET", fmt.Errorf("unsupported target type: %s", target.Type)
 	}
+}
+
+// windowsLocalhostKnownHosts returns the path to a known_hosts file that
+// contains the localhost SSH host key, pinned during tb-manage installation.
+// If the file doesn't exist, returns a path that ssh will fail against
+// (StrictHostKeyChecking=yes will reject unknown hosts).
+// Hardcoded to C:\ProgramData to avoid PROGRAMDATA env var manipulation.
+func windowsLocalhostKnownHosts() string {
+	return `C:\ProgramData\tb-manage\localhost_known_hosts`
 }
 
 func (a *Agent) handleSessionOpen(msg protocol.SessionOpenMessage) error {
@@ -460,26 +580,45 @@ func (a *Agent) handleSessionOpen(msg protocol.SessionOpenMessage) error {
 		targetDesc = msg.Target.Type
 	}
 
-	session, err := terminal.NewPTYSession(
-		msg.SessionID,
-		msg.Cols,
-		msg.Rows,
-		shellCmd,
-		func(sessionID, data string) {
-			a.sendMessage(protocol.PTYOutputMessage{
-				Type:      protocol.TypePTYOutput,
-				SessionID: sessionID,
-				Data:      data,
-			})
-		},
-		func(sessionID, errMsg string) {
-			a.sendMessage(protocol.SessionErrorMessage{
-				Type:      protocol.TypeSessionError,
-				SessionID: sessionID,
-				Error:     errMsg,
-			})
-		},
-	)
+	onOutput := func(sessionID, data string) {
+		a.sendMessage(protocol.PTYOutputMessage{
+			Type:      protocol.TypePTYOutput,
+			SessionID: sessionID,
+			Data:      data,
+		})
+	}
+	onError := func(sessionID, errMsg string) {
+		a.sendMessage(protocol.SessionErrorMessage{
+			Type:      protocol.TypeSessionError,
+			SessionID: sessionID,
+			Error:     errMsg,
+		})
+	}
+
+	var session *terminal.PTYSession
+	if a.tmuxEnabled {
+		if terminal.TmuxSessionExists(msg.SessionID) {
+			// Resume: attach to existing tmux session
+			cmd := terminal.AttachTmuxCommand(msg.SessionID)
+			session, err = terminal.NewPTYSessionWithCmd(msg.SessionID, msg.Cols, msg.Rows, cmd, onOutput, onError)
+			if err == nil {
+				a.log.Info("session resumed (tmux attach)", "session_id", msg.SessionID, "target", targetDesc)
+			}
+		} else {
+			// New: create tmux session
+			cmd := terminal.NewTmuxCommand(msg.SessionID, msg.Cols, msg.Rows, shellCmd)
+			session, err = terminal.NewPTYSessionWithCmd(msg.SessionID, msg.Cols, msg.Rows, cmd, onOutput, onError)
+			if err == nil {
+				a.log.Info("session created (tmux new)", "session_id", msg.SessionID, "target", targetDesc)
+			}
+		}
+	} else {
+		session, err = terminal.NewPTYSession(msg.SessionID, msg.Cols, msg.Rows, shellCmd, onOutput, onError)
+		if err == nil {
+			a.log.Info("session opened", "session_id", msg.SessionID, "target", targetDesc)
+		}
+	}
+
 	if err != nil {
 		a.sendMessage(protocol.SessionErrorMessage{
 			Type:      protocol.TypeSessionError,
@@ -491,7 +630,6 @@ func (a *Agent) handleSessionOpen(msg protocol.SessionOpenMessage) error {
 	}
 
 	a.sessions[msg.SessionID] = session
-	a.log.Info("session opened", "session_id", msg.SessionID, "target", targetDesc)
 	if a.auditLog != nil {
 		a.auditLog.Log(audit.AuditEntry{
 			SessionID: msg.SessionID,
@@ -568,6 +706,13 @@ func (a *Agent) handleSessionClose(msg protocol.SessionCloseMessage) error {
 			})
 		}
 		session.Close()
+
+		// Destroy the persistent tmux session on explicit close
+		if a.tmuxEnabled {
+			if err := terminal.DestroyTmuxSession(msg.SessionID); err != nil {
+				a.log.Debug("tmux session destroy", "session_id", msg.SessionID, "error", err)
+			}
+		}
 		a.log.Info("session closed", "session_id", msg.SessionID)
 	}
 	return nil
@@ -598,11 +743,16 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			var sessions []string
+			if a.tmuxEnabled {
+				sessions = terminal.ListTmuxSessions()
+			}
 			a.sendMessage(protocol.HeartbeatMessage{
 				Type:      protocol.TypeHeartbeat,
 				AgentID:   a.agentID,
 				ClusterID: a.clusterID,
 				Timestamp: time.Now().Unix(),
+				Sessions:  sessions,
 			})
 		}
 	}

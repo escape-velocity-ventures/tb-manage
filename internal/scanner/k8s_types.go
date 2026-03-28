@@ -13,12 +13,18 @@ type ClusterScanResult struct {
 
 // NodeScanResult matches the edge-ingest NodeScanResult.
 type NodeScanResult struct {
-	Name    string   `json:"name"`
-	Status  string   `json:"status"`
-	Roles   []string `json:"roles"`
-	Version string   `json:"version"`
-	OS      string   `json:"os"`
-	OSImage string   `json:"os_image"`
+	Name             string   `json:"name"`
+	Status           string   `json:"status"`
+	Roles            []string `json:"roles"`
+	Version          string   `json:"version"`
+	OS               string   `json:"os"`
+	OSImage          string   `json:"os_image"`
+	Arch             string   `json:"arch,omitempty"`
+	CPUCores         int      `json:"cpu_cores,omitempty"`
+	MemoryBytes      int64    `json:"memory_bytes,omitempty"`
+	ContainerRuntime string   `json:"container_runtime,omitempty"`
+	InternalIP       string   `json:"internal_ip,omitempty"`
+	ExternalIP       string   `json:"external_ip,omitempty"`
 }
 
 // NamespaceScanResult matches the edge-ingest NamespaceScanResult.

@@ -79,8 +79,9 @@ func ClassifyNIC(name string) NICType {
 		}
 	}
 
-	// Virtio (VM guest) — must check before physical since both start with "en"
-	virtioPrefixes := []string{"enp0s", "ens"}
+	// Virtio / cloud VM guest — must check before physical since both start with "en"
+	// enp0s* = virtio-net, ens* = GCP/some cloud, enX* = AWS ENA (Elastic Network Adapter)
+	virtioPrefixes := []string{"enp0s", "ens", "enx"}
 	for _, p := range virtioPrefixes {
 		if strings.HasPrefix(lower, p) {
 			return NICVirtio

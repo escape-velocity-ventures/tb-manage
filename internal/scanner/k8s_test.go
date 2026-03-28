@@ -1,10 +1,14 @@
 package scanner
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestClusterScanResultJSONShape(t *testing.T) {
@@ -22,12 +26,17 @@ func TestClusterScanResultJSONShape(t *testing.T) {
 		Version:  "v1.34.3+k3s3",
 		Nodes: []NodeScanResult{
 			{
-				Name:    "node-1",
-				Status:  "Ready",
-				Roles:   []string{"control-plane", "etcd"},
-				Version: "v1.34.3+k3s3",
-				OS:      "linux",
-				OSImage: "Ubuntu 24.04.3 LTS",
+				Name:             "node-1",
+				Status:           "Ready",
+				Roles:            []string{"control-plane", "etcd"},
+				Version:          "v1.34.3+k3s3",
+				OS:               "linux",
+				OSImage:          "Ubuntu 24.04.3 LTS",
+				Arch:             "arm64",
+				CPUCores:         4,
+				MemoryBytes:      8589934592,
+				ContainerRuntime: "containerd://1.7.11-k3s2",
+				InternalIP:       "192.168.7.101",
 			},
 		},
 		Namespaces: []NamespaceScanResult{
@@ -144,7 +153,7 @@ func TestClusterScanResultJSONShape(t *testing.T) {
 	// Node shape
 	nodes := m["nodes"].([]interface{})
 	node := nodes[0].(map[string]interface{})
-	for _, key := range []string{"name", "status", "roles", "version", "os", "os_image"} {
+	for _, key := range []string{"name", "status", "roles", "version", "os", "os_image", "arch", "cpu_cores", "memory_bytes", "container_runtime", "internal_ip"} {
 		if _, ok := node[key]; !ok {
 			t.Errorf("node missing key %q", key)
 		}
@@ -329,5 +338,72 @@ func TestOmitemptyBehavior(t *testing.T) {
 		if _, ok := wm[key]; ok {
 			t.Errorf("optional field %q should be omitted when zero/nil", key)
 		}
+	}
+}
+
+func TestScanNodesEnrichedFields(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "enriched-node",
+			Labels: map[string]string{
+				"node-role.kubernetes.io/control-plane": "",
+			},
+		},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+			},
+			NodeInfo: corev1.NodeSystemInfo{
+				KubeletVersion:          "v1.34.3+k3s3",
+				OperatingSystem:         "linux",
+				OSImage:                 "Ubuntu 24.04.3 LTS",
+				Architecture:            "arm64",
+				ContainerRuntimeVersion: "containerd://1.7.11-k3s2",
+			},
+			Capacity: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("4"),
+				corev1.ResourceMemory: resource.MustParse("8Gi"),
+			},
+			Addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeInternalIP, Address: "192.168.7.101"},
+				{Type: corev1.NodeExternalIP, Address: "203.0.113.10"},
+			},
+		},
+	}
+
+	clientset := fake.NewSimpleClientset(node)
+	nodes, err := scanNodes(context.Background(), clientset)
+	if err != nil {
+		t.Fatalf("scanNodes: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(nodes))
+	}
+
+	n := nodes[0]
+	if n.Name != "enriched-node" {
+		t.Errorf("Name = %q, want %q", n.Name, "enriched-node")
+	}
+	if n.Status != "Ready" {
+		t.Errorf("Status = %q, want %q", n.Status, "Ready")
+	}
+	if n.Arch != "arm64" {
+		t.Errorf("Arch = %q, want %q", n.Arch, "arm64")
+	}
+	if n.CPUCores != 4 {
+		t.Errorf("CPUCores = %d, want %d", n.CPUCores, 4)
+	}
+	expectedMem := int64(8 * 1024 * 1024 * 1024)
+	if n.MemoryBytes != expectedMem {
+		t.Errorf("MemoryBytes = %d, want %d", n.MemoryBytes, expectedMem)
+	}
+	if n.ContainerRuntime != "containerd://1.7.11-k3s2" {
+		t.Errorf("ContainerRuntime = %q, want %q", n.ContainerRuntime, "containerd://1.7.11-k3s2")
+	}
+	if n.InternalIP != "192.168.7.101" {
+		t.Errorf("InternalIP = %q, want %q", n.InternalIP, "192.168.7.101")
+	}
+	if n.ExternalIP != "203.0.113.10" {
+		t.Errorf("ExternalIP = %q, want %q", n.ExternalIP, "203.0.113.10")
 	}
 }

@@ -14,6 +14,7 @@ var (
 	flagAnonKey  string
 	flagConfig   string
 	flagLogLevel string
+	flagIdentity string
 )
 
 var rootCmd = &cobra.Command{
@@ -31,6 +32,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagAnonKey, "anon-key", "", "Supabase anon key for API auth (env: TB_ANON_KEY)")
 	rootCmd.PersistentFlags().StringVar(&flagConfig, "config", "", "Config file path (default: /etc/tb-manage/config.yaml)")
 	rootCmd.PersistentFlags().StringVar(&flagLogLevel, "log-level", "info", "Log level: debug, info, warn, error")
+	rootCmd.PersistentFlags().StringVar(&flagIdentity, "identity", "", "Identity mode: token (default), ssh-host-key (env: TB_IDENTITY)")
 }
 
 // Execute runs the root command.
@@ -64,6 +66,17 @@ func resolveAnonKey() string {
 		return flagAnonKey
 	}
 	return os.Getenv("TB_ANON_KEY")
+}
+
+// resolveIdentity returns the identity mode from flag or environment.
+func resolveIdentity() string {
+	if flagIdentity != "" {
+		return flagIdentity
+	}
+	if v := os.Getenv("TB_IDENTITY"); v != "" {
+		return v
+	}
+	return "token"
 }
 
 // resolveUpstreams returns the upstreams JSON from environment.

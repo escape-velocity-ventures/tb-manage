@@ -25,15 +25,28 @@ type EdgeIngestMeta struct {
 
 // HostScanResult matches the edge-ingest HostScanResult interface.
 type HostScanResult struct {
-	Name       string            `json:"name"`
-	Type       string            `json:"type"` // baremetal, vm, cloud
-	System     HostSystem        `json:"system"`
-	Network    HostNetwork       `json:"network"`
-	Kubernetes *HostKubernetes   `json:"kubernetes,omitempty"`
+	Name            string            `json:"name"`
+	Type            string            `json:"type"` // baremetal, vm, cloud
+	DiscoveryMethod string            `json:"discovery_method,omitempty"`
+	System          HostSystem        `json:"system"`
+	Network         HostNetwork       `json:"network"`
+	Kubernetes      *HostKubernetes   `json:"kubernetes,omitempty"`
 
 	// Extra fields go into scan_data via [key: string]: unknown
-	Storage    json.RawMessage   `json:"storage,omitempty"`
-	Containers json.RawMessage   `json:"containers,omitempty"`
+	Storage    json.RawMessage        `json:"storage,omitempty"`
+	Containers json.RawMessage        `json:"containers,omitempty"`
+	GPU        json.RawMessage        `json:"gpu,omitempty"`
+	Services   json.RawMessage        `json:"services,omitempty"`
+	VMs        json.RawMessage        `json:"vms,omitempty"`
+	VNC        *RemoteAccessEndpoint  `json:"vnc,omitempty"`
+	RDP        *RemoteAccessEndpoint  `json:"rdp,omitempty"`
+}
+
+// RemoteAccessEndpoint describes a VNC or RDP endpoint detected on the host.
+type RemoteAccessEndpoint struct {
+	Available   bool   `json:"available"`
+	Port        int    `json:"port"`
+	ProcessName string `json:"process_name,omitempty"`
 }
 
 // HostSystem matches the system field in HostScanResult.
@@ -46,8 +59,10 @@ type HostSystem struct {
 
 // HostNetwork matches the network field in HostScanResult.
 type HostNetwork struct {
-	Hostname   string          `json:"hostname"`
-	Interfaces []HostInterface `json:"interfaces"`
+	Hostname      string          `json:"hostname"`
+	PublicIP      string          `json:"public_ip,omitempty"`
+	CloudProvider string          `json:"cloud_provider,omitempty"`
+	Interfaces    []HostInterface `json:"interfaces"`
 }
 
 // HostInterface matches the interface shape expected by edge-ingest.

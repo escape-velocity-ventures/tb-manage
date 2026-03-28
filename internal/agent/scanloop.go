@@ -2,9 +2,11 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"time"
 
+	"github.com/tinkerbelle-io/tb-manage/internal/auth"
 	"github.com/tinkerbelle-io/tb-manage/internal/commands"
 	"github.com/tinkerbelle-io/tb-manage/internal/insights"
 	"github.com/tinkerbelle-io/tb-manage/internal/remediation"
@@ -20,6 +22,7 @@ type ScanLoopConfig struct {
 	UploadURL         string            // Supabase base URL for edge-ingest (single mode)
 	Token             string            // agent_token (single mode)
 	AnonKey           string            // Supabase anon key (single mode)
+	IdentityMode      string            // "token" or "ssh-host-key"
 	Upstreams         []upload.Upstream // Multi-upstream mode
 	Version           string            // binary version
 	ExcludeNamespaces []string          // namespaces to skip during k8s scan
@@ -65,6 +68,15 @@ func NewScanLoop(cfg ScanLoopConfig, logger *slog.Logger) *ScanLoop {
 
 	if len(cfg.Upstreams) > 0 {
 		sl.uploader = upload.NewMultiClient(cfg.Upstreams)
+	} else if cfg.UploadURL != "" && cfg.IdentityMode == "ssh-host-key" {
+		// SSH host key identity: load host key and create host-key client.
+		// Token is passed through for cluster routing (host key = identity, token = cluster).
+		hostID, err := auth.LoadHostKey("")
+		if err != nil {
+			logger.Error("failed to load host key for scan loop — scan data will NOT be uploaded", "error", err)
+		} else {
+			sl.uploader = upload.NewHostKeyClient(cfg.UploadURL, cfg.AnonKey, cfg.Token, hostID)
+		}
 	} else if cfg.UploadURL != "" && cfg.Token != "" {
 		sl.uploader = upload.NewClient(cfg.UploadURL, cfg.Token, cfg.AnonKey)
 	}
@@ -194,6 +206,13 @@ func (sl *ScanLoop) runScan(ctx context.Context) {
 		sl.uploadResult(ctx, result)
 	}
 
+	// Controller mode: upload individual host entries for each cluster node.
+	// SkipUpload prevents controller from uploading its own pod-level host scan,
+	// but we specifically upload node-derived host entries for host discovery.
+	if sl.uploader != nil && sl.cfg.SkipUpload && result.Cluster != nil {
+		sl.uploadNodeHosts(ctx, result)
+	}
+
 	// Insights + Remediation + Commands require k8s client
 	clientset := sl.getK8sClient()
 	if clientset == nil {
@@ -262,6 +281,36 @@ func (sl *ScanLoop) uploadResult(ctx context.Context, result *scanner.Result) {
 		"cluster_id", resp.ClusterID,
 		"resources", resp.ResourceCount,
 	)
+}
+
+// uploadNodeHosts sends individual host entries for each cluster node.
+// This enables the SaaS to show all cluster nodes in the host inventory
+// even if they don't have a standalone tb-manage agent installed.
+func (sl *ScanLoop) uploadNodeHosts(ctx context.Context, result *scanner.Result) {
+	clusterName := ""
+	// Try to extract cluster name from the scan result
+	var clusterResult scanner.ClusterScanResult
+	if err := json.Unmarshal(result.Cluster, &clusterResult); err == nil {
+		clusterName = clusterResult.Name
+	}
+
+	requests := upload.BuildNodeHostRequests(result.Cluster, clusterName, sl.cfg.Version)
+	if len(requests) == 0 {
+		return
+	}
+
+	uploaded := 0
+	for _, req := range requests {
+		if ctx.Err() != nil {
+			break
+		}
+		if _, err := sl.uploader.Upload(ctx, req); err != nil {
+			sl.log.Warn("node host upload failed", "node", req.Host.Name, "error", err)
+		} else {
+			uploaded++
+		}
+	}
+	sl.log.Info("node host discovery complete", "discovered", uploaded, "total", len(requests))
 }
 
 // getK8sClient lazily creates a shared k8s clientset.

@@ -23,7 +23,7 @@ func (r InferredRole) HostType() string {
 	case RoleCloud:
 		return "cloud"
 	default:
-		return "unknown"
+		return "baremetal" // fallback — "unknown" isn't valid in the DB
 	}
 }
 

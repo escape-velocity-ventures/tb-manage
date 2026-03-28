@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/tinkerbelle-io/tb-manage/internal/auth"
 	"github.com/tinkerbelle-io/tb-manage/internal/logging"
 	"github.com/tinkerbelle-io/tb-manage/internal/scanner"
 	"github.com/tinkerbelle-io/tb-manage/internal/ssh"
@@ -208,12 +209,33 @@ func uploadResult(ctx context.Context, result *scanner.Result) error {
 		return err
 	}
 
-	// Single upstream mode: --token/--url/--anon-key
-	token := resolveToken()
+	identity := resolveIdentity()
 	url := resolveURL()
 	anonKey := resolveAnonKey()
-	if token == "" || url == "" {
-		return fmt.Errorf("--token/TB_TOKEN and --url/TB_URL (or TB_UPSTREAMS) required for upload")
+
+	if url == "" {
+		return fmt.Errorf("--url/TB_URL required for upload")
+	}
+
+	if identity == "ssh-host-key" {
+		// SSH host key identity mode — token passed through for cluster routing
+		hostID, err := auth.LoadHostKey("")
+		if err != nil {
+			return fmt.Errorf("load host key: %w", err)
+		}
+		client := upload.NewHostKeyClient(url, anonKey, resolveToken(), hostID)
+		resp, err := client.Upload(ctx, req)
+		if err != nil {
+			return fmt.Errorf("upload failed: %w", err)
+		}
+		slog.Info("uploaded (host-key)", "session_id", resp.SessionID, "fingerprint", hostID.Fingerprint)
+		return nil
+	}
+
+	// Token mode (default)
+	token := resolveToken()
+	if token == "" {
+		return fmt.Errorf("--token/TB_TOKEN required for upload (or use --identity ssh-host-key)")
 	}
 
 	req.AgentToken = token

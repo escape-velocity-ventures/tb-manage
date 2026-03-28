@@ -9,6 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tinkerbelle-io/tb-manage/internal/agent"
+	"github.com/tinkerbelle-io/tb-manage/internal/auth"
+	"github.com/tinkerbelle-io/tb-manage/internal/casync"
 	"github.com/tinkerbelle-io/tb-manage/internal/config"
 	"github.com/tinkerbelle-io/tb-manage/internal/logging"
 	"github.com/tinkerbelle-io/tb-manage/internal/upload"
@@ -31,6 +33,12 @@ var (
 	flagShellCommand        string
 	flagAuditLog            string
 	flagPublicKey           string
+	flagNoTmux              bool
+	flagCAKeySync           bool
+	flagCAKeyPath           string
+	flagCAStatePath         string
+	flagCAOverlapWindow     time.Duration
+	flagCASyncInterval      time.Duration
 )
 
 var daemonCmd = &cobra.Command{
@@ -66,6 +74,12 @@ func init() {
 	daemonCmd.Flags().StringVar(&flagAuditLog, "audit-log", "", "Custom audit log path (default: ~/.tb-manage/audit.log on macOS, /var/log/tb-manage/audit.log on Linux)")
 	daemonCmd.Flags().StringVar(&flagPublicKey, "public-key", "", "Ed25519 public key for command signature verification (hex or base64, env: TB_PUBLIC_KEY)")
 	daemonCmd.Flags().StringVar(&flagShellCommand, "shell-command", "", "Custom shell command for PTY sessions (e.g., 'nsenter -t 1 -m -u -i -n -- /bin/bash')")
+	daemonCmd.Flags().BoolVar(&flagNoTmux, "no-tmux", false, "Disable persistent terminal sessions (no tmux)")
+	daemonCmd.Flags().BoolVar(&flagCAKeySync, "ca-key-sync", false, "Enable SSH CA public key synchronization (env: TB_CA_KEY_SYNC)")
+	daemonCmd.Flags().StringVar(&flagCAKeyPath, "ca-key-path", "/etc/ssh/tb_ca.pub", "Path for SSH CA public key file")
+	daemonCmd.Flags().StringVar(&flagCAStatePath, "ca-state-path", "/var/lib/tb-manage/ca-rotation.json", "Path for CA rotation state file")
+	daemonCmd.Flags().DurationVar(&flagCAOverlapWindow, "ca-overlap-window", 24*time.Hour, "Overlap window for CA key rotation")
+	daemonCmd.Flags().DurationVar(&flagCASyncInterval, "ca-sync-interval", 6*time.Hour, "How often to sync CA public key from SaaS")
 	rootCmd.AddCommand(daemonCmd)
 }
 
@@ -75,12 +89,31 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	// Load config file for defaults (permissions, etc.)
 	cfg, _ := config.Load(flagConfig)
 
+	// Resolve values: flag > env > config file > default
 	token := resolveToken()
-	saasURL := resolveSaaSURL()
-	gatewayURL := resolveGatewayURL()
+	if token == "" && cfg != nil && cfg.Token != "" {
+		token = cfg.Token
+	}
 
-	// Need at least one mode of operation: root token OR multi-upstream config
-	if token == "" && resolveUpstreams() == "" {
+	saasURL := resolveSaaSURL()
+	if saasURL == "" && cfg != nil && cfg.URL != "" {
+		saasURL = cfg.URL
+	}
+
+	gatewayURL := resolveGatewayURL()
+	if gatewayURL == "" && cfg != nil && cfg.Gateway != "" {
+		gatewayURL = cfg.Gateway
+	}
+
+	identity := resolveIdentity()
+	// resolveIdentity returns "token" as default — if neither flag nor env
+	// was set, fall back to config file
+	if !cmd.Flags().Changed("identity") && resolveEnv("TB_IDENTITY") == "" && cfg != nil && cfg.Identity != "" {
+		identity = cfg.Identity
+	}
+
+	// Need at least one mode of operation: token, multi-upstream, or host-key identity
+	if token == "" && resolveUpstreams() == "" && identity != "ssh-host-key" {
 		return cmd.Help()
 	}
 
@@ -94,6 +127,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	excludeNS := flagExcludeNamespaces
 	if !cmd.Flags().Changed("exclude-namespaces") && cfg != nil && len(cfg.ExcludeNamespaces) > 0 {
 		excludeNS = cfg.ExcludeNamespaces
+	}
+
+	// Resolve anon key once — used by both scan loop and CA sync
+	anonKey := resolveAnonKey()
+	if anonKey == "" && cfg != nil && cfg.AnonKey != "" {
+		anonKey = cfg.AnonKey
 	}
 
 	// Build scan loop config
@@ -136,7 +175,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			Interval:               flagScanInterval,
 			UploadURL:              saasURL,
 			Token:                  token,
-			AnonKey:                resolveAnonKey(),
+			AnonKey:                anonKey,
+			IdentityMode:           identity,
 			Version:                rootCmd.Version,
 			ExcludeNamespaces:      excludeNS,
 			SkipUpload:             flagSkipUpload,
@@ -152,6 +192,43 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		shellCmd = strings.Fields(flagShellCommand)
 	}
 
+	// Load SSH host key if identity mode is ssh-host-key
+	var hostIdentity *auth.HostIdentity
+	if identity == "ssh-host-key" {
+		hi, err := auth.LoadHostKey("")
+		if err != nil {
+			return fmt.Errorf("load host key for gateway auth: %w", err)
+		}
+		hostIdentity = hi
+		slog.Info("loaded SSH host key for gateway auth", "fingerprint", hi.Fingerprint)
+	}
+
+	// Build CA sync config if enabled
+	var caSyncCfg *casync.Config
+	caKeySync := flagCAKeySync || resolveEnv("TB_CA_KEY_SYNC") == "true"
+	if caKeySync && saasURL != "" {
+		caSyncCfg = &casync.Config{
+			SaaSURL:       saasURL,
+			Token:         token,
+			AnonKey:       anonKey,
+			CAKeyPath:     flagCAKeyPath,
+			StatePath:     flagCAStatePath,
+			OverlapWindow: flagCAOverlapWindow,
+			SyncInterval:  flagCASyncInterval,
+			RestartSSHD:   true,
+		}
+		slog.Info("CA key sync enabled",
+			"key_path", flagCAKeyPath,
+			"sync_interval", flagCASyncInterval,
+			"overlap_window", flagCAOverlapWindow,
+		)
+	}
+
+	// Validate gateway URL scheme (reject insecure ws:// by default)
+	if err := validateGatewayURL(gatewayURL, false); err != nil {
+		return err
+	}
+
 	a := agent.New(agent.Config{
 		WSURL:        gatewayURL,
 		Token:        token,
@@ -164,6 +241,10 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		TokenInURLFallback: cfg.TokenInURLFallback,
 		AuditLogPath:       flagAuditLog,
 		PublicKey:          resolvePublicKey(),
+		IdentityMode:       identity,
+		HostIdentity:       hostIdentity,
+		DisableTmux:        flagNoTmux,
+		CASyncConfig:       caSyncCfg,
 	})
 
 	return a.Run(context.Background())
