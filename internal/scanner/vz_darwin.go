@@ -5,6 +5,7 @@ package scanner
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"sort"
 	"strconv"
@@ -190,9 +191,12 @@ func resolveActiveVZIPs(ctx context.Context, runner CommandRunner, leases []DHCP
 		}
 	}
 
-	// Ping-test each unique IP
+	// Ping-test each unique IP (validate to prevent shell injection from malformed leases)
 	var active []string
 	for _, ip := range byMAC {
+		if net.ParseIP(ip) == nil {
+			continue // skip malformed IPs
+		}
 		if _, err := runner.Run(ctx, "ping -c1 -W1 "+ip+" >/dev/null 2>&1"); err == nil {
 			active = append(active, ip)
 		}
