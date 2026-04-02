@@ -61,12 +61,17 @@ func (s *VZScanner) Scan(ctx context.Context, runner CommandRunner) (json.RawMes
 	}
 
 	// Assign IPs and roles to VMs
-	// If there's exactly one VM and one IP, it's obvious.
-	// For multiple VMs, assign IPs in order (best effort — VZ doesn't expose per-process MAC mapping).
+	// VZ doesn't expose per-process MAC mapping, so IP assignment is only
+	// reliable with exactly one VM. With multiple VMs, leave IP empty
+	// rather than assigning the wrong IP confidently.
 	for i, vm := range vms {
-		if i < len(activeIPs) {
-			vm.IP = activeIPs[i]
+		if len(vms) == 1 && len(activeIPs) == 1 {
+			vm.IP = activeIPs[0]
+		} else if len(vms) == 1 && len(activeIPs) > 0 {
+			vm.IP = activeIPs[0] // single VM, pick first IP
 		}
+		// Multiple VMs: IP left empty (ambiguous mapping)
+		_ = i
 		vm.Role = InferVMRole(vm.Name)
 		result.VMs = append(result.VMs, *vm)
 	}

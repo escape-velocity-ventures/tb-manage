@@ -84,12 +84,12 @@ func TestParseLimaJSON(t *testing.T) {
 		{
 			name:   "empty array",
 			input:  `[]`,
-			expect: nil,
+			expect: []VMInfo{},
 		},
 		{
 			name:   "invalid json",
 			input:  `not json`,
-			expect: nil,
+			expect: []VMInfo{},
 		},
 		{
 			name: "instance with worker in name",
