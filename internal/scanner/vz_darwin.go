@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -197,5 +198,7 @@ func resolveActiveVZIPs(ctx context.Context, runner CommandRunner, leases []DHCP
 		}
 	}
 
+	// Sort for deterministic VM↔IP assignment across runs
+	sort.Strings(active)
 	return active
 }

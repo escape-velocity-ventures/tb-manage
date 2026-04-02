@@ -45,10 +45,13 @@ type limaNetwork struct {
 func ParseLimaJSON(data []byte) []VMInfo {
 	var instances []limaInstance
 	if err := json.Unmarshal(data, &instances); err != nil {
-		return nil
+		return []VMInfo{}
+	}
+	if len(instances) == 0 {
+		return []VMInfo{}
 	}
 
-	var vms []VMInfo
+	vms := make([]VMInfo, 0, len(instances))
 	for _, inst := range instances {
 		vm := VMInfo{
 			Name:       inst.Name,
