@@ -118,16 +118,9 @@ func ParseVirshList(data []byte) []VMInfo {
 		}
 
 		// Format: Id Name State (state can be two words like "shut off")
-		// Id is a number or "-" for stopped VMs
-		var name, state string
-		if fields[0] == "-" {
-			name = fields[1]
-			state = strings.Join(fields[2:], " ")
-		} else {
-			// numeric ID
-			name = fields[1]
-			state = strings.Join(fields[2:], " ")
-		}
+		// Id is a number or "-" for stopped VMs — either way, name is fields[1]
+		name := fields[1]
+		state := strings.Join(fields[2:], " ")
 
 		vms = append(vms, VMInfo{
 			Name:       name,
