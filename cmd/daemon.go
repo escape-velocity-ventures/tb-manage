@@ -249,8 +249,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Start config reconciler if enabled
-	ctx := context.Background()
+	// Shared context for all daemon goroutines — cancelled on shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	if flagEnableConfigReconciler {
 		k8sCfg, err := scanner.GetK8sConfig()
 		if err != nil {
@@ -312,7 +313,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		CASyncConfig:       caSyncCfg,
 	})
 
-	return a.Run(context.Background())
+	return a.Run(ctx)
 }
 
 // resolveSaaSURL returns the SaaS URL for uploading scan results.
