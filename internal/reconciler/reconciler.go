@@ -5,9 +5,11 @@ package reconciler
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -31,7 +33,6 @@ type Reconciler struct {
 	interval   time.Duration
 	dryRun     bool
 	hostRoot   string
-	coordinator *RestartCoordinator
 }
 
 // New creates a Reconciler. hostRoot is the prefix for host filesystem paths
@@ -45,7 +46,6 @@ func New(client kubernetes.Interface, namespace, nodeName string, nodeLabels map
 		interval:   interval,
 		dryRun:     dryRun,
 		hostRoot:   hostRoot,
-		coordinator: NewRestartCoordinator(client, namespace, nodeName, 1),
 	}
 }
 
@@ -113,8 +113,12 @@ func (r *Reconciler) reconcileTarget(ctx context.Context, target ReconcileTarget
 		TargetPath:    target.TargetPath,
 	}
 
-	// Resolve the host-prefixed path
-	fullPath := filepath.Join(r.hostRoot, target.TargetPath)
+	// Resolve the host-prefixed path with traversal protection
+	fullPath := filepath.Clean(filepath.Join(r.hostRoot, target.TargetPath))
+	if !strings.HasPrefix(fullPath, filepath.Clean(r.hostRoot)) {
+		result.Error = fmt.Errorf("path traversal blocked: %s escapes host root %s", target.TargetPath, r.hostRoot)
+		return result
+	}
 
 	// Get the desired config data from ConfigMap
 	// Use "config.yaml" key by convention; fall back to first key
