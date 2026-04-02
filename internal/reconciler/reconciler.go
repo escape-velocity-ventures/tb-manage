@@ -114,8 +114,14 @@ func (r *Reconciler) reconcileTarget(ctx context.Context, target ReconcileTarget
 	}
 
 	// Resolve the host-prefixed path with traversal protection
-	fullPath := filepath.Clean(filepath.Join(r.hostRoot, target.TargetPath))
-	if !strings.HasPrefix(fullPath, filepath.Clean(r.hostRoot)) {
+	// Guard against empty hostRoot which would collapse the check
+	cleanRoot := filepath.Clean(r.hostRoot)
+	if cleanRoot == "." || cleanRoot == "" {
+		result.Error = fmt.Errorf("hostRoot must be an absolute path, got %q", r.hostRoot)
+		return result
+	}
+	fullPath := filepath.Clean(filepath.Join(cleanRoot, target.TargetPath))
+	if !strings.HasPrefix(fullPath, cleanRoot) {
 		result.Error = fmt.Errorf("path traversal blocked: %s escapes host root %s", target.TargetPath, r.hostRoot)
 		return result
 	}
