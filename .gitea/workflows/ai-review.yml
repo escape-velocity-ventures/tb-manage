@@ -16,4 +16,4 @@ jobs:
       pr-number: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
     secrets:
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-      gitea-token: ${{ secrets.CI_TOKEN }}
+      gitea-token: ${{ secrets.CYBILL_TOKEN }}
