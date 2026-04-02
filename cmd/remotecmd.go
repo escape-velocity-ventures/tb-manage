@@ -187,14 +187,14 @@ func buildRemoteSSHConfig(user, keyPath string) (*ssh.ClientConfig, error) {
 		return nil, fmt.Errorf("no SSH keys available (no agent, no key files found)")
 	}
 
-	// Host key verification
+	// Host key verification — refuse to connect without known_hosts
 	home, _ := os.UserHomeDir()
-	var hostKeyCallback ssh.HostKeyCallback
 	knownHostsFile := filepath.Join(home, ".ssh", "known_hosts")
-	if cb, err := knownhosts.New(knownHostsFile); err == nil {
-		hostKeyCallback = cb
-	} else {
-		hostKeyCallback = ssh.InsecureIgnoreHostKey()
+	hostKeyCallback, err := knownhosts.New(knownHostsFile)
+	if err != nil {
+		return nil, fmt.Errorf("cannot verify host key: %s not found or unreadable (%w). "+
+			"Connect manually first with: ssh %s@<host> (to populate known_hosts), "+
+			"or run: ssh-keyscan <host> >> %s", knownHostsFile, err, user, knownHostsFile)
 	}
 
 	return &ssh.ClientConfig{
