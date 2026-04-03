@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -46,7 +47,14 @@ func init() {
 	rootCmd.AddCommand(authCmd)
 }
 
+var validAgentName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
 func runAuthCmd(_ *cobra.Command, _ []string) error {
+	// Validate agent name — used in filenames and JWT subjects
+	if !validAgentName.MatchString(flagAuthAgent) {
+		return fmt.Errorf("invalid --agent %q: must match [a-zA-Z0-9_-]+", flagAuthAgent)
+	}
+
 	// Load identity
 	id, err := sshca.LoadIdentity("")
 	if err != nil {
@@ -158,7 +166,10 @@ func mintAgentJWT(agentName, parent, context, secret string) (string, error) {
 		"alg": "HS256",
 		"typ": "JWT",
 	}
-	headerJSON, _ := json.Marshal(header)
+	headerJSON, err := json.Marshal(header)
+	if err != nil {
+		return "", fmt.Errorf("marshal JWT header: %w", err)
+	}
 
 	now := time.Now().Unix()
 	payload := map[string]interface{}{
@@ -170,7 +181,10 @@ func mintAgentJWT(agentName, parent, context, secret string) (string, error) {
 	if context != "" {
 		payload["context"] = context
 	}
-	payloadJSON, _ := json.Marshal(payload)
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal JWT payload: %w", err)
+	}
 
 	// Base64url encode
 	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)

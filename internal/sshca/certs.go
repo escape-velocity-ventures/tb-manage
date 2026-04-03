@@ -74,17 +74,20 @@ func CleanExpiredCerts() (int, error) {
 	}
 
 	removed := 0
+	var errs []string
 	for _, cert := range certs {
 		if cert.Expired {
-			// Remove cert file
-			os.Remove(cert.Path)
-			// Remove corresponding private key if it exists
 			keyPath := strings.TrimSuffix(cert.Path, "-cert.pub")
-			os.Remove(keyPath)
-			// Remove corresponding public key if it exists
-			os.Remove(keyPath + ".pub")
+			for _, path := range []string{cert.Path, keyPath, keyPath + ".pub"} {
+				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+					errs = append(errs, fmt.Sprintf("remove %s: %v", path, err))
+				}
+			}
 			removed++
 		}
+	}
+	if len(errs) > 0 {
+		return removed, fmt.Errorf("partial cleanup: %s", strings.Join(errs, "; "))
 	}
 
 	return removed, nil
