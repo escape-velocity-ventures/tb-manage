@@ -64,14 +64,11 @@ func (s *VZScanner) Scan(ctx context.Context, runner CommandRunner) (json.RawMes
 	// VZ doesn't expose per-process MAC mapping, so IP assignment is only
 	// reliable with exactly one VM. With multiple VMs, leave IP empty
 	// rather than assigning the wrong IP confidently.
-	for i, vm := range vms {
-		if len(vms) == 1 && len(activeIPs) == 1 {
+	for _, vm := range vms {
+		if len(vms) == 1 && len(activeIPs) > 0 {
 			vm.IP = activeIPs[0]
-		} else if len(vms) == 1 && len(activeIPs) > 0 {
-			vm.IP = activeIPs[0] // single VM, pick first IP
 		}
-		// Multiple VMs: IP left empty (ambiguous mapping)
-		_ = i
+		// Multiple VMs: IP left empty (ambiguous — no per-process MAC mapping in VZ)
 		vm.Role = InferVMRole(vm.Name)
 		result.VMs = append(result.VMs, *vm)
 	}
@@ -185,13 +182,19 @@ func parseDHCPLeases() []DHCPLease {
 	return leases
 }
 
+// vzNATSubnet is the VZ framework NAT subnet (192.168.64.0/20).
+var vzNATSubnet = func() *net.IPNet {
+	_, cidr, _ := net.ParseCIDR("192.168.64.0/20")
+	return cidr
+}()
+
 // resolveActiveVZIPs returns all reachable VZ NAT IPs from DHCP leases.
 // Deduplicates by MAC address (keeps most recent lease per MAC).
 func resolveActiveVZIPs(ctx context.Context, runner CommandRunner, leases []DHCPLease) []string {
 	// Deduplicate: keep most recent lease per MAC (file is append-only)
 	byMAC := make(map[string]string) // MAC -> IP
 	for _, l := range leases {
-		if strings.HasPrefix(l.IPAddress, "192.168.64.") {
+		if ip := net.ParseIP(l.IPAddress); ip != nil && vzNATSubnet.Contains(ip) {
 			byMAC[l.HWAddress] = l.IPAddress
 		}
 	}
