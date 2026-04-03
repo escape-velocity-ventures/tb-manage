@@ -162,26 +162,26 @@ func runAuthCmd(_ *cobra.Command, _ []string) error {
 // mintAgentJWT creates a minimal HMAC-SHA256 JWT for agent authentication.
 // This JWT is verified by the ssh-sign edge function.
 func mintAgentJWT(agentName, parent, context, secret string) (string, error) {
-	header := map[string]string{
-		"alg": "HS256",
-		"typ": "JWT",
-	}
-	headerJSON, err := json.Marshal(header)
-	if err != nil {
-		return "", fmt.Errorf("marshal JWT header: %w", err)
-	}
+	// Fixed header — deterministic byte output, no map ordering ambiguity
+	headerJSON := []byte(`{"alg":"HS256","typ":"JWT"}`)
 
 	now := time.Now().Unix()
-	payload := map[string]interface{}{
-		"sub":     "agent:" + agentName,
-		"parent":  parent,
-		"iat":     now,
-		"exp":     now + 300, // 5 min validity for the JWT itself
+	// Build payload with deterministic key order via json.Marshal on a struct
+	type jwtPayload struct {
+		Sub     string `json:"sub"`
+		Parent  string `json:"parent"`
+		Iat     int64  `json:"iat"`
+		Exp     int64  `json:"exp"`
+		Context string `json:"context,omitempty"`
 	}
-	if context != "" {
-		payload["context"] = context
+	p := jwtPayload{
+		Sub:     "agent:" + agentName,
+		Parent:  parent,
+		Iat:     now,
+		Exp:     now + 300, // 5 min validity
+		Context: context,
 	}
-	payloadJSON, err := json.Marshal(payload)
+	payloadJSON, err := json.Marshal(p)
 	if err != nil {
 		return "", fmt.Errorf("marshal JWT payload: %w", err)
 	}
