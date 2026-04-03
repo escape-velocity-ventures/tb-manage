@@ -17,4 +17,3 @@ jobs:
     secrets:
       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
       gitea-token: ${{ secrets.CYBILL_TOKEN }}
-

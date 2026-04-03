@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -13,7 +14,11 @@ import (
 	"github.com/tinkerbelle-io/tb-manage/internal/casync"
 	"github.com/tinkerbelle-io/tb-manage/internal/config"
 	"github.com/tinkerbelle-io/tb-manage/internal/logging"
+	"github.com/tinkerbelle-io/tb-manage/internal/reconciler"
+	"github.com/tinkerbelle-io/tb-manage/internal/scanner"
 	"github.com/tinkerbelle-io/tb-manage/internal/upload"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 var (
@@ -39,6 +44,13 @@ var (
 	flagCAStatePath         string
 	flagCAOverlapWindow     time.Duration
 	flagCASyncInterval      time.Duration
+
+	// Config reconciler flags
+	flagEnableConfigReconciler bool
+	flagReconcilerInterval     time.Duration
+	flagReconcilerDryRun       bool
+	flagReconcilerNamespace    string
+	flagReconcilerHostRoot     string
 )
 
 var daemonCmd = &cobra.Command{
@@ -80,6 +92,14 @@ func init() {
 	daemonCmd.Flags().StringVar(&flagCAStatePath, "ca-state-path", "/var/lib/tb-manage/ca-rotation.json", "Path for CA rotation state file")
 	daemonCmd.Flags().DurationVar(&flagCAOverlapWindow, "ca-overlap-window", 24*time.Hour, "Overlap window for CA key rotation")
 	daemonCmd.Flags().DurationVar(&flagCASyncInterval, "ca-sync-interval", 6*time.Hour, "How often to sync CA public key from SaaS")
+
+	// Config reconciler flags
+	daemonCmd.Flags().BoolVar(&flagEnableConfigReconciler, "enable-config-reconciler", false, "Enable ConfigMap-driven config reconciliation to host filesystem")
+	daemonCmd.Flags().DurationVar(&flagReconcilerInterval, "reconciler-interval", 60*time.Second, "Config reconciler poll interval")
+	daemonCmd.Flags().BoolVar(&flagReconcilerDryRun, "reconciler-dry-run", false, "Config reconciler dry-run mode (log changes without writing)")
+	daemonCmd.Flags().StringVar(&flagReconcilerNamespace, "reconciler-namespace", "infrastructure", "Namespace to watch for reconciler ConfigMaps")
+	daemonCmd.Flags().StringVar(&flagReconcilerHostRoot, "host-root", "/host", "Host filesystem root prefix (DaemonSet hostPath mount point)")
+
 	rootCmd.AddCommand(daemonCmd)
 }
 
@@ -229,6 +249,52 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Shared context for all daemon goroutines — cancelled on shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if flagEnableConfigReconciler {
+		k8sCfg, err := scanner.GetK8sConfig()
+		if err != nil {
+			return fmt.Errorf("config-reconciler requires k8s access: %w", err)
+		}
+		k8sClient, err := kubernetes.NewForConfig(k8sCfg)
+		if err != nil {
+			return fmt.Errorf("config-reconciler k8s client: %w", err)
+		}
+
+		nodeName := os.Getenv("NODE_NAME")
+		if nodeName == "" {
+			nodeName, _ = os.Hostname()
+		}
+
+		// Fetch node labels for selector matching
+		nodeLabels := map[string]string{}
+		node, err := k8sClient.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+		if err != nil {
+			slog.Warn("config-reconciler: could not fetch node labels, selector matching may be incomplete",
+				"node", nodeName, "error", err)
+		} else {
+			nodeLabels = node.Labels
+		}
+
+		rec := reconciler.New(k8sClient, flagReconcilerNamespace, nodeName, nodeLabels,
+			flagReconcilerInterval, flagReconcilerDryRun, flagReconcilerHostRoot)
+
+		go func() {
+			if err := rec.Run(ctx); err != nil {
+				slog.Error("config-reconciler exited with error", "error", err)
+			}
+		}()
+
+		slog.Info("config-reconciler enabled",
+			"namespace", flagReconcilerNamespace,
+			"interval", flagReconcilerInterval,
+			"dry_run", flagReconcilerDryRun,
+			"host_root", flagReconcilerHostRoot,
+			"node", nodeName,
+		)
+	}
+
 	a := agent.New(agent.Config{
 		WSURL:        gatewayURL,
 		Token:        token,
@@ -247,7 +313,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		CASyncConfig:       caSyncCfg,
 	})
 
-	return a.Run(context.Background())
+	return a.Run(ctx)
 }
 
 // resolveSaaSURL returns the SaaS URL for uploading scan results.
