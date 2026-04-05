@@ -39,9 +39,13 @@ func NewTmuxManager(cmd Commander) *TmuxManager {
 }
 
 // StartSession launches a new tmux session with the given name and command.
+// Name must match ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ to prevent tmux interpretation issues.
 func (t *TmuxManager) StartSession(name, command string) error {
 	if name == "" {
 		return fmt.Errorf("session name is required")
+	}
+	if !safeIdentifier.MatchString(name) {
+		return fmt.Errorf("session name %q contains unsafe characters (must match %s)", name, safeIdentifier.String())
 	}
 	if command == "" {
 		return fmt.Errorf("command is required")
