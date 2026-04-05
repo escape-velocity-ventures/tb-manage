@@ -53,7 +53,10 @@ func (t *TmuxManager) StartSession(name, command string) error {
 	if t.HasSession(name) {
 		return fmt.Errorf("session %q already exists", name)
 	}
-	_, err := t.cmd.Run("tmux", "new-session", "-d", "-s", name, command)
+	// Wrap in sh -c to ensure shell interpretation of env vars and pipes.
+	// tmux does invoke via shell internally, but being explicit prevents
+	// ambiguity across tmux versions.
+	_, err := t.cmd.Run("tmux", "new-session", "-d", "-s", name, "sh", "-c", command)
 	if err != nil {
 		return fmt.Errorf("start session %q: %w", name, err)
 	}

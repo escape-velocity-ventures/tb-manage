@@ -80,7 +80,7 @@ func TestStartSession_Success(t *testing.T) {
 	// has-session returns error (not exists)
 	mc.On("tmux", []string{"has-session", "-t", "cybill"}, nil, fmt.Errorf("no session"))
 	// new-session succeeds
-	mc.On("tmux", []string{"new-session", "-d", "-s", "cybill", "claude --skill review"}, nil, nil)
+	mc.On("tmux", []string{"new-session", "-d", "-s", "cybill", "sh", "-c", "claude --skill review"}, nil, nil)
 	tm := NewTmuxManager(mc)
 
 	err := tm.StartSession("cybill", "claude --skill review")
