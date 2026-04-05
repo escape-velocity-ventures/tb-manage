@@ -3,7 +3,6 @@ package supervisor
 import (
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -52,20 +51,9 @@ func newAgentStartCmd(registryPath *string) *cobra.Command {
 				return err
 			}
 
-			command, err := reg.BuildCommand(name)
+			command, err := reg.BuildFullCommand(name)
 			if err != nil {
 				return err
-			}
-
-			// Set env vars for the agent if configured
-			cfg, _ := reg.Get(name)
-			if len(cfg.Env) > 0 {
-				var envPrefix []string
-				for k, v := range cfg.Env {
-					envPrefix = append(envPrefix, fmt.Sprintf("%s=%s", k, v))
-				}
-				sort.Strings(envPrefix)
-				command = strings.Join(envPrefix, " ") + " " + command
 			}
 
 			if err := tm.StartSession(name, command); err != nil {
@@ -77,7 +65,7 @@ func newAgentStartCmd(registryPath *string) *cobra.Command {
 	}
 }
 
-func newAgentStopCmd(registryPath *string) *cobra.Command {
+func newAgentStopCmd(_ *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop <name>",
 		Short: "Stop an agent tmux session",
@@ -159,19 +147,9 @@ func newAgentRestartCmd(registryPath *string) *cobra.Command {
 				}
 			}
 
-			command, err := reg.BuildCommand(name)
+			command, err := reg.BuildFullCommand(name)
 			if err != nil {
 				return err
-			}
-
-			cfg, _ := reg.Get(name)
-			if len(cfg.Env) > 0 {
-				var envPrefix []string
-				for k, v := range cfg.Env {
-					envPrefix = append(envPrefix, fmt.Sprintf("%s=%s", k, v))
-				}
-				sort.Strings(envPrefix)
-				command = strings.Join(envPrefix, " ") + " " + command
 			}
 
 			if err := tm.StartSession(name, command); err != nil {

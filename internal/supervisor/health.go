@@ -68,7 +68,7 @@ func (h *HealthChecker) Run(ctx context.Context) {
 }
 
 func (h *HealthChecker) defaultRestart(name string) error {
-	cmd, err := h.registry.BuildCommand(name)
+	cmd, err := h.registry.BuildFullCommand(name)
 	if err != nil {
 		return err
 	}

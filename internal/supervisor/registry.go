@@ -4,9 +4,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// safeIdentifier validates names and channels against injection.
+var safeIdentifier = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+
+// shellQuote escapes a value for safe use in a shell string.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
 
 // AgentConfig describes a single Claude Code agent.
 type AgentConfig struct {
@@ -96,7 +107,7 @@ func (r *Registry) Names() []string {
 	return names
 }
 
-// BuildCommand constructs the claude CLI command for an agent.
+// BuildCommand constructs the claude CLI command for an agent (without env vars).
 func (r *Registry) BuildCommand(name string) (string, error) {
 	cfg, ok := r.agents[name]
 	if !ok {
@@ -104,9 +115,42 @@ func (r *Registry) BuildCommand(name string) (string, error) {
 	}
 
 	if cfg.Channel != "" {
+		// Validate channel name to prevent shell injection
+		if !safeIdentifier.MatchString(cfg.Channel) {
+			return "", fmt.Errorf("agent %q: channel name %q contains unsafe characters", name, cfg.Channel)
+		}
 		return fmt.Sprintf("claude --dangerously-load-development-channels server:%s", cfg.Channel), nil
 	}
 
 	// Fallback: just run claude
 	return "claude", nil
+}
+
+// BuildFullCommand constructs the complete command including env var prefix.
+// Used by both CLI start and health checker restart to ensure consistent behavior.
+func (r *Registry) BuildFullCommand(name string) (string, error) {
+	command, err := r.BuildCommand(name)
+	if err != nil {
+		return "", err
+	}
+
+	cfg, ok := r.agents[name]
+	if !ok {
+		return command, nil
+	}
+
+	if len(cfg.Env) > 0 {
+		var envPrefix []string
+		for k, v := range cfg.Env {
+			// Validate key, shell-quote value to prevent injection
+			if !safeIdentifier.MatchString(k) {
+				return "", fmt.Errorf("agent %q: env key %q contains unsafe characters", name, k)
+			}
+			envPrefix = append(envPrefix, fmt.Sprintf("%s=%s", k, shellQuote(v)))
+		}
+		sort.Strings(envPrefix)
+		command = strings.Join(envPrefix, " ") + " " + command
+	}
+
+	return command, nil
 }
