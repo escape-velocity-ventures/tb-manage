@@ -15,7 +15,9 @@ import (
 	"github.com/tinkerbelle-io/tb-manage/internal/config"
 	"github.com/tinkerbelle-io/tb-manage/internal/logging"
 	"github.com/tinkerbelle-io/tb-manage/internal/reconciler"
+	"github.com/tinkerbelle-io/tb-manage/internal/services"
 	"github.com/tinkerbelle-io/tb-manage/internal/scanner"
+	"github.com/tinkerbelle-io/tb-manage/internal/terminal"
 	"github.com/tinkerbelle-io/tb-manage/internal/upload"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -293,6 +295,69 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			"host_root", flagReconcilerHostRoot,
 			"node", nodeName,
 		)
+	}
+
+	// Start service supervisor if services are configured
+	var svcMgr *services.Manager
+	if cfg != nil && len(cfg.Services) > 0 && !flagNoTmux {
+		svcConfigs := make([]services.ServiceConfig, len(cfg.Services))
+		for i, sc := range cfg.Services {
+			svcConfigs[i] = services.ServiceConfig{
+				Name:        sc.Name,
+				Command:     sc.Command,
+				WorkDir:     sc.WorkDir,
+				Env:         sc.Env,
+				HealthURL:   sc.HealthURL,
+				AutoRestart: sc.AutoRestart,
+				Enabled:     sc.Enabled,
+			}
+		}
+		svcMgr = services.NewManager(svcConfigs, services.NewRealTmuxBackend(), slog.Default())
+		if err := svcMgr.StartAll(); err != nil {
+			slog.Warn("service supervisor: some services failed to start", "error", err)
+		} else {
+			slog.Info("service supervisor started", "services", len(cfg.Services))
+		}
+
+		// Stop services on context cancellation
+		go func() {
+			<-ctx.Done()
+			if err := svcMgr.StopAll(); err != nil {
+				slog.Warn("service supervisor: error stopping services", "error", err)
+			}
+		}()
+	}
+
+	// Start session GC loop (unless tmux is disabled)
+	if !flagNoTmux && terminal.TmuxAvailable() {
+		gcCfg := terminal.DefaultGCConfig()
+		if cfg != nil {
+			gcEnabled := true
+			if cfg.SessionGC.Enabled != nil {
+				gcEnabled = *cfg.SessionGC.Enabled
+			}
+			if cfg.SessionGC.StaleTimeout > 0 {
+				gcCfg.StaleTimeout = cfg.SessionGC.StaleTimeout
+			}
+			if cfg.SessionGC.DeadReapDelay > 0 {
+				gcCfg.DeadReapDelay = cfg.SessionGC.DeadReapDelay
+			}
+			if cfg.SessionGC.Interval > 0 {
+				gcCfg.Interval = cfg.SessionGC.Interval
+			}
+			if !gcEnabled {
+				gcCfg.Interval = 0 // signal to skip
+			}
+		}
+		if gcCfg.Interval > 0 {
+			excludeFn := func() []string {
+				if svcMgr == nil {
+					return nil
+				}
+				return svcMgr.ManagedSessionIDs()
+			}
+			go terminal.StartGCLoop(ctx, gcCfg, excludeFn)
+		}
 	}
 
 	a := agent.New(agent.Config{
